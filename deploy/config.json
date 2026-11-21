@@ -1,0 +1,34 @@
+{
+  "dns_listen": ":53",
+  "web_listen": ":8080",
+  "web_hosts": [],
+  "data_dir": "/data",
+  "upstreams": [
+    "https://dns.quad9.net/dns-query",
+    "9.9.9.9",
+    "149.112.112.112"
+  ],
+  "bootstrap_dns": ["9.9.9.9", "149.112.112.112"],
+  "upstream_timeout_ms": 2000,
+  "conditional_forwarding": {},
+  "block_mode": "null",
+  "blocked_ttl": 60,
+  "cache_size": 100000,
+  "cache_min_ttl": 0,
+  "cache_max_ttl": 86400,
+  "cache_negative_ttl": 60,
+  "rate_limit_qps": 200,
+  "rate_limit_burst": 500,
+  "rate_limit_exempt": ["127.0.0.0/8", "::1/128"],
+  "allowed_clients": ["127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7", "fe80::/10"],
+  "bypass_clients": [],
+  "block_firefox_doh_canary": true,
+  "querylog_size": 5000,
+  "list_update_hours": 24,
+  "default_lists": [
+    {"name": "HaGeZi Pro", "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt", "enabled": true},
+    {"name": "HaGeZi Threat Intelligence", "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.txt", "enabled": true},
+    {"name": "URLhaus (malware)", "url": "https://urlhaus.abuse.ch/downloads/hostfile/", "enabled": true},
+    {"name": "Phishing Army", "url": "https://phishing.army/download/phishing_army_blocklist.txt", "enabled": true}
+  ]
+}

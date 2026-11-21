@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VartaDNS</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<section id="login" class="hidden">
+  <form id="login-form" class="card login-card">
+    <div class="card-head"><h1>🛡 VartaDNS</h1><select class="lang-select" aria-label="Language"></select></div>
+    <label><span data-i18n="user"></span><input id="login-user" value="admin" autocomplete="username"></label>
+    <label><span data-i18n="password"></span><input id="login-pass" type="password" autocomplete="current-password" autofocus></label>
+    <button type="submit" data-i18n="login"></button>
+    <p id="login-err" class="err"></p>
+  </form>
+</section>
+
+<section id="main" class="hidden">
+  <header>
+    <div class="brand">🛡 VartaDNS <span id="ver" class="muted"></span></div>
+    <nav>
+      <button data-tab="dash" class="active" data-i18n="tab_dash"></button>
+      <button data-tab="log" data-i18n="tab_log"></button>
+      <button data-tab="rules" data-i18n="tab_rules"></button>
+      <button data-tab="groups" data-i18n="tab_groups"></button>
+      <button data-tab="lists" data-i18n="tab_lists"></button>
+      <button data-tab="settings" data-i18n="tab_settings"></button>
+    </nav>
+    <div class="right">
+      <span id="blocking-state" class="pill"></span>
+      <select class="lang-select" aria-label="Language"></select>
+      <button id="logout" class="ghost" data-i18n="logout"></button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Dashboard -->
+    <div id="tab-dash" class="tab">
+      <div class="cards">
+        <div class="card stat"><div class="label" data-i18n="s_total"></div><div id="s-total" class="value">–</div></div>
+        <div class="card stat"><div class="label" data-i18n="s_blocked"></div><div id="s-blocked" class="value red">–</div><div id="s-blocked-pct" class="sub"></div></div>
+        <div class="card stat"><div class="label" data-i18n="s_cached"></div><div id="s-cached" class="value">–</div><div id="s-hit" class="sub"></div></div>
+        <div class="card stat"><div class="label" data-i18n="s_qps"></div><div id="s-qps" class="value">–</div></div>
+        <div class="card stat"><div class="label" data-i18n="s_rules"></div><div id="s-rules" class="value">–</div></div>
+        <div class="card stat"><div class="label" data-i18n="s_mem"></div><div id="s-mem" class="value">–</div><div id="s-uptime" class="sub"></div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2 data-i18n="chart_title"></h2>
+          <span class="legend"><i class="dot blue"></i><span data-i18n="legend_all"></span> <i class="dot red"></i><span data-i18n="legend_blocked"></span></span></div>
+        <canvas id="chart" height="180"></canvas>
+      </div>
+      <div class="grid3">
+        <div class="card"><h2 data-i18n="top_domains"></h2><ol id="top-domains" class="top"></ol></div>
+        <div class="card"><h2 data-i18n="top_blocked"></h2><ol id="top-blocked" class="top"></ol></div>
+        <div class="card"><h2 data-i18n="top_clients"></h2><ol id="top-clients" class="top"></ol></div>
+      </div>
+      <div class="card">
+        <h2 data-i18n="upstreams"></h2>
+        <table><thead><tr><th data-i18n="col_server"></th><th data-i18n="col_latency"></th><th data-i18n="col_state"></th></tr></thead><tbody id="upstreams"></tbody></table>
+      </div>
+    </div>
+
+    <!-- Query log -->
+    <div id="tab-log" class="tab hidden">
+      <div class="card">
+        <div class="toolbar">
+          <input id="log-q" data-i18n-ph="log_search">
+          <select id="log-status">
+            <option value="" data-i18n="f_all"></option>
+            <option value="blocked" data-i18n="f_blocked"></option>
+            <option value="forwarded" data-i18n="f_forwarded"></option>
+            <option value="cached" data-i18n="f_cached"></option>
+            <option value="allowed" data-i18n="f_allowed"></option>
+            <option value="error" data-i18n="f_error"></option>
+            <option value="refused" data-i18n="f_refused"></option>
+            <option value="safesearch" data-i18n="f_safesearch"></option>
+          </select>
+          <label class="inline"><input type="checkbox" id="log-auto" checked> <span data-i18n="autorefresh"></span></label>
+        </div>
+        <div class="scroll">
+        <table class="log">
+          <thead><tr><th data-i18n="col_time"></th><th data-i18n="col_client"></th><th data-i18n="col_group"></th><th data-i18n="col_domain"></th><th data-i18n="col_type"></th><th data-i18n="col_status"></th><th data-i18n="col_rule"></th><th data-i18n="col_ms"></th><th></th></tr></thead>
+          <tbody id="log-body"></tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rules -->
+    <div id="tab-rules" class="tab hidden">
+      <div class="card">
+        <h2 data-i18n="check_title"></h2>
+        <form id="check-form" class="toolbar">
+          <input id="check-domain" data-i18n-ph="check_ph">
+          <button type="submit" data-i18n="check_btn"></button>
+          <span id="check-result"></span>
+        </form>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <h2 data-i18n="custom_block"></h2>
+          <form class="toolbar rule-form" data-kind="block">
+            <input data-i18n-ph="block_ph"><button type="submit" data-i18n="add"></button>
+          </form>
+          <ul id="rules-block" class="rules"></ul>
+        </div>
+        <div class="card">
+          <h2 data-i18n="custom_allow"></h2>
+          <form class="toolbar rule-form" data-kind="allow">
+            <input data-i18n-ph="allow_ph"><button type="submit" data-i18n="add"></button>
+          </form>
+          <ul id="rules-allow" class="rules"></ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Groups -->
+    <div id="tab-groups" class="tab hidden">
+      <div class="card">
+        <h2 data-i18n="g_new"></h2>
+        <p class="muted" data-i18n="g_help"></p>
+        <form id="group-add" class="toolbar">
+          <input id="group-name" data-i18n-ph="g_name_ph">
+          <input id="group-members" class="grow" data-i18n-ph="g_members_ph">
+          <button type="submit" data-i18n="g_create"></button>
+        </form>
+      </div>
+      <div id="groups-list"></div>
+    </div>
+
+    <!-- Lists -->
+    <div id="tab-lists" class="tab hidden">
+      <div class="card">
+        <div class="card-head"><h2 data-i18n="lists_title"></h2>
+          <button id="lists-refresh" data-i18n="lists_refresh"></button></div>
+        <table>
+          <thead><tr><th data-i18n="col_on"></th><th data-i18n="col_name"></th><th data-i18n="col_type"></th><th data-i18n="col_rules"></th><th data-i18n="col_updated"></th><th data-i18n="col_error"></th><th></th></tr></thead>
+          <tbody id="lists-body"></tbody>
+        </table>
+        <form id="list-add" class="toolbar">
+          <input id="list-name" data-i18n-ph="list_name_ph">
+          <input id="list-url" data-i18n-ph="list_url_ph" class="grow">
+          <label class="inline"><input type="checkbox" id="list-allow"> <span data-i18n="list_is_allow"></span></label>
+          <button type="submit" data-i18n="list_add"></button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div id="tab-settings" class="tab hidden">
+      <div class="grid2">
+        <div class="card">
+          <h2 data-i18n="filtering"></h2>
+          <div class="toolbar">
+            <button id="block-on" data-i18n="enable"></button>
+            <button class="ghost" data-pause="5" data-i18n="pause5"></button>
+            <button class="ghost" data-pause="30" data-i18n="pause30"></button>
+            <button class="ghost" data-pause="60" data-i18n="pause60"></button>
+            <button class="danger" id="block-off" data-i18n="disable"></button>
+          </div>
+          <h2 data-i18n="cache"></h2>
+          <button id="cache-flush" class="ghost" data-i18n="cache_flush"></button>
+        </div>
+        <div class="card">
+          <h2 data-i18n="pw_title"></h2>
+          <form id="pw-form">
+            <label><span data-i18n="pw_old"></span><input type="password" id="pw-old" autocomplete="current-password"></label>
+            <label><span data-i18n="pw_new"></span><input type="password" id="pw-new" autocomplete="new-password"></label>
+            <button type="submit" data-i18n="save"></button>
+            <p id="pw-msg"></p>
+          </form>
+        </div>
+      </div>
+    </div>
+  </main>
+</section>
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>
