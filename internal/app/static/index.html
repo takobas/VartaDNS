@@ -166,6 +166,35 @@
           <button id="cache-flush" class="ghost" data-i18n="cache_flush"></button>
         </div>
         <div class="card">
+          <h2 data-i18n="up_title"></h2>
+          <label class="inline radio"><input type="radio" name="up-strategy" value="encrypted-first"> <span data-i18n="up_enc"></span></label>
+          <p class="muted" data-i18n="up_enc_help"></p>
+          <label class="inline radio"><input type="radio" name="up-strategy" value="fastest"> <span data-i18n="up_fast"></span></label>
+          <p class="muted" data-i18n="up_fast_help"></p>
+        </div>
+      </div>
+      <div class="card">
+        <h2 data-i18n="us_title"></h2>
+        <p class="muted" data-i18n="us_help"></p>
+        <div class="toolbar">
+          <select id="us-preset"></select>
+          <button id="us-apply-preset" class="ghost" data-i18n="us_use_preset"></button>
+          <span id="us-preset-note" class="muted"></span>
+        </div>
+        <div class="grid2">
+          <label><span data-i18n="us_servers"></span><textarea id="us-servers" rows="5"></textarea></label>
+          <label><span data-i18n="us_bootstrap"></span><textarea id="us-bootstrap" rows="5"></textarea></label>
+        </div>
+        <div class="toolbar">
+          <button id="us-test" class="ghost" data-i18n="us_test"></button>
+          <button id="us-save" data-i18n="us_save"></button>
+          <button id="us-reset" class="ghost" data-i18n="us_reset"></button>
+          <span id="us-state" class="muted"></span>
+        </div>
+        <table id="us-results" class="hidden"><thead><tr><th data-i18n="col_server"></th><th data-i18n="us_result"></th><th data-i18n="col_latency"></th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="grid2">
+        <div class="card">
           <h2 data-i18n="pw_title"></h2>
           <form id="pw-form">
             <label><span data-i18n="pw_old"></span><input type="password" id="pw-old" autocomplete="current-password"></label>

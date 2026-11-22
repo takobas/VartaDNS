@@ -227,40 +227,163 @@ func (d *doh) Exchange(ctx context.Context, query []byte) ([]byte, error) {
 // ---- group with failover ------------------------------------------------------------
 
 type member struct {
-	u       Upstream
-	latency atomic.Int64 // EWMA in microseconds
-	fails   atomic.Int64 // consecutive failures
+	u         Upstream
+	encrypted bool         // DNS-over-HTTPS
+	latency   atomic.Int64 // EWMA in microseconds
+	fails     atomic.Int64 // consecutive failures
+}
+
+// record updates health and latency after one exchange.
+func (m *member) record(ok bool, d time.Duration) {
+	if !ok {
+		m.fails.Add(1)
+		return
+	}
+	us := d.Microseconds()
+	if old := m.latency.Load(); old == 0 {
+		m.latency.Store(us)
+	} else {
+		m.latency.Store((old*7 + us) / 8)
+	}
+	m.fails.Store(0)
+}
+
+func (m *member) healthy() bool { return m.fails.Load() <= 2 }
+
+// Strategy selects how upstreams are ordered.
+type Strategy int32
+
+const (
+	// EncryptedFirst uses healthy DoH upstreams before plain DNS; plain
+	// DNS is only a fallback. Within each kind the fastest goes first.
+	EncryptedFirst Strategy = iota
+	// Fastest uses the healthy upstream with the lowest latency.
+	Fastest
+)
+
+// ParseStrategy converts "encrypted-first" / "fastest".
+func ParseStrategy(s string) (Strategy, error) {
+	switch s {
+	case "", "encrypted-first":
+		return EncryptedFirst, nil
+	case "fastest":
+		return Fastest, nil
+	}
+	return EncryptedFirst, fmt.Errorf("unknown upstream strategy %q (use encrypted-first or fastest)", s)
+}
+
+func (s Strategy) String() string {
+	if s == Fastest {
+		return "fastest"
+	}
+	return "encrypted-first"
 }
 
 // Group tries upstreams ordered by health and latency.
 type Group struct {
-	members []*member
-	timeout time.Duration
+	ms       atomic.Pointer[[]*member] // replaced atomically by SetSpecs
+	timeout  time.Duration
+	strategy atomic.Int32
+	resolver *net.Resolver
 }
+
+func (g *Group) list() []*member {
+	if p := g.ms.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// SetStrategy switches the ordering at runtime.
+func (g *Group) SetStrategy(s Strategy) { g.strategy.Store(int32(s)) }
+
+// Strategy returns the current ordering strategy.
+func (g *Group) Strategy() Strategy { return Strategy(g.strategy.Load()) }
 
 // NewGroup builds a group from specs.
 func NewGroup(specs []string, timeout time.Duration, resolver *net.Resolver) (*Group, error) {
 	if len(specs) == 0 {
 		return nil, errors.New("upstream: no upstreams configured")
 	}
-	g := &Group{timeout: timeout}
-	for _, s := range specs {
-		u, err := New(strings.TrimSpace(s), resolver)
-		if err != nil {
-			return nil, err
-		}
-		g.members = append(g.members, &member{u: u})
+	g := &Group{timeout: timeout, resolver: resolver}
+	if err := g.SetSpecs(specs); err != nil {
+		return nil, err
 	}
 	return g, nil
 }
 
+// MaxUpstreams limits how many servers a group may hold.
+const MaxUpstreams = 8
+
+// Validate parses specs without using them.
+func Validate(specs []string) error {
+	n := 0
+	for _, s := range specs {
+		if s = strings.TrimSpace(s); s == "" {
+			continue
+		}
+		if _, err := New(s, nil); err != nil {
+			return err
+		}
+		n++
+	}
+	if n == 0 {
+		return errors.New("upstream: at least one server is required")
+	}
+	if n > MaxUpstreams {
+		return fmt.Errorf("upstream: at most %d servers", MaxUpstreams)
+	}
+	return nil
+}
+
+// SetSpecs replaces the servers at runtime. Health and latency of servers
+// that stay in the list are kept.
+func (g *Group) SetSpecs(specs []string) error {
+	if err := Validate(specs); err != nil {
+		return err
+	}
+	old := map[string]*member{}
+	for _, m := range g.list() {
+		old[m.u.String()] = m
+	}
+	var next []*member
+	for _, s := range specs {
+		if s = strings.TrimSpace(s); s == "" {
+			continue
+		}
+		u, _ := New(s, g.resolver)
+		if m, ok := old[u.String()]; ok {
+			next = append(next, m)
+			continue
+		}
+		_, isDoH := u.(*doh)
+		next = append(next, &member{u: u, encrypted: isDoH})
+	}
+	g.ms.Store(&next)
+	return nil
+}
+
+// Specs returns the current server list.
+func (g *Group) Specs() []string {
+	var out []string
+	for _, m := range g.list() {
+		out = append(out, m.u.String())
+	}
+	return out
+}
+
 func (g *Group) ordered() []*member {
-	ms := make([]*member, len(g.members))
-	copy(ms, g.members)
+	cur := g.list()
+	ms := make([]*member, len(cur))
+	copy(ms, cur)
+	encFirst := g.Strategy() == EncryptedFirst
 	sort.SliceStable(ms, func(i, j int) bool {
-		fi, fj := ms[i].fails.Load() > 2, ms[j].fails.Load() > 2
-		if fi != fj {
-			return !fi // healthy first
+		hi, hj := ms[i].healthy(), ms[j].healthy()
+		if hi != hj {
+			return hi // healthy first
+		}
+		if encFirst && ms[i].encrypted != ms[j].encrypted {
+			return ms[i].encrypted // DoH before plain DNS
 		}
 		return ms[i].latency.Load() < ms[j].latency.Load()
 	})
@@ -277,20 +400,13 @@ func (g *Group) Exchange(ctx context.Context, query []byte) ([]byte, string, err
 		resp, err := m.u.Exchange(cctx, query)
 		cancel()
 		if err == nil && dnsmsg.Rcode(resp) != dnsmsg.RcodeServFail {
-			us := time.Since(start).Microseconds()
-			old := m.latency.Load()
-			if old == 0 {
-				m.latency.Store(us)
-			} else {
-				m.latency.Store((old*7 + us) / 8)
-			}
-			m.fails.Store(0)
+			m.record(true, time.Since(start))
 			return resp, m.u.String(), nil
 		}
 		if err == nil {
 			err = errors.New("SERVFAIL from " + m.u.String())
 		}
-		m.fails.Add(1)
+		m.record(false, 0)
 		lastErr = err
 		if ctx.Err() != nil {
 			break
@@ -305,32 +421,156 @@ type Status struct {
 	LatencyMs float64 `json:"latency_ms"`
 	Fails     int64   `json:"fails"`
 	Healthy   bool    `json:"healthy"`
+	Encrypted bool    `json:"encrypted"`
+	Primary   bool    `json:"primary"` // tried first for the next query
 }
 
 // Statuses reports per-upstream health.
 func (g *Group) Statuses() []Status {
-	out := make([]Status, 0, len(g.members))
-	for _, m := range g.members {
+	cur := g.list()
+	out := make([]Status, 0, len(cur))
+	if len(cur) == 0 {
+		return out
+	}
+	first := g.ordered()[0]
+	for _, m := range cur {
 		f := m.fails.Load()
 		out = append(out, Status{Name: m.u.String(), LatencyMs: float64(m.latency.Load()) / 1000,
-			Fails: f, Healthy: f <= 2})
+			Fails: f, Healthy: f <= 2, Encrypted: m.encrypted, Primary: m == first})
 	}
 	return out
+}
+
+// HealthLoop probes every upstream periodically with a tiny query (root
+// NS). It keeps DoH connections warm, keeps latency figures current and
+// lets an upstream that failed earlier come back into use.
+func (g *Group) HealthLoop(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	var id uint16
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		for _, m := range g.list() {
+			id++
+			cctx, cancel := context.WithTimeout(ctx, g.timeout)
+			start := time.Now()
+			resp, err := m.u.Exchange(cctx, dnsmsg.BuildQuery(id, "", dnsmsg.TypeNS))
+			cancel()
+			m.record(err == nil && dnsmsg.Rcode(resp) != dnsmsg.RcodeServFail, time.Since(start))
+		}
+	}
 }
 
 // BootstrapResolver returns a resolver that uses the given plain DNS servers,
 // so DoH hostnames and list URLs resolve without depending on ourselves.
 func BootstrapResolver(servers []string) *net.Resolver {
-	if len(servers) == 0 {
-		return net.DefaultResolver
-	}
-	var i atomic.Uint32
-	return &net.Resolver{
+	return NewBootstrap(servers).Resolver()
+}
+
+// Bootstrap is a set of plain DNS servers that can be changed at runtime.
+// With an empty set the system resolver is used.
+type Bootstrap struct {
+	servers atomic.Pointer[[]string]
+	next    atomic.Uint32
+	res     *net.Resolver
+}
+
+// NewBootstrap creates a bootstrap with the given servers.
+func NewBootstrap(servers []string) *Bootstrap {
+	b := &Bootstrap{}
+	b.Set(servers)
+	b.res = &net.Resolver{
 		PreferGo: true,
-		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			s := withPort(servers[int(i.Add(1))%len(servers)])
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			var d net.Dialer
-			return d.DialContext(ctx, network, s)
+			list := b.Servers()
+			if len(list) == 0 {
+				return d.DialContext(ctx, network, address) // system resolver
+			}
+			return d.DialContext(ctx, network, withPort(list[int(b.next.Add(1))%len(list)]))
 		},
 	}
+	return b
+}
+
+// Set replaces the servers.
+func (b *Bootstrap) Set(servers []string) {
+	var clean []string
+	for _, s := range servers {
+		if s = strings.TrimSpace(s); s != "" {
+			clean = append(clean, s)
+		}
+	}
+	b.servers.Store(&clean)
+}
+
+// Servers returns the current list.
+func (b *Bootstrap) Servers() []string { return *b.servers.Load() }
+
+// Resolver returns a resolver that always uses the current servers.
+func (b *Bootstrap) Resolver() *net.Resolver { return b.res }
+
+// ValidateBootstrap accepts plain IP addresses with optional port only:
+// bootstrap servers must not need DNS themselves.
+func ValidateBootstrap(servers []string) error {
+	for _, s := range servers {
+		if s = strings.TrimSpace(s); s == "" {
+			continue
+		}
+		host := s
+		if h, _, err := net.SplitHostPort(s); err == nil {
+			host = h
+		}
+		if net.ParseIP(strings.Trim(host, "[]")) == nil {
+			return fmt.Errorf("bootstrap %q: must be an IP address", s)
+		}
+	}
+	return nil
+}
+
+// Result is the outcome of testing one server.
+type Result struct {
+	Server string  `json:"server"`
+	OK     bool    `json:"ok"`
+	Ms     float64 `json:"ms"`
+	Error  string  `json:"error,omitempty"`
+}
+
+// Test sends one small query (root NS) to every spec and reports results.
+func Test(ctx context.Context, specs []string, resolver *net.Resolver, timeout time.Duration) []Result {
+	var out []Result
+	for i, s := range specs {
+		if s = strings.TrimSpace(s); s == "" {
+			continue
+		}
+		r := Result{Server: s}
+		u, err := New(s, resolver)
+		if err != nil {
+			r.Error = err.Error()
+			out = append(out, r)
+			continue
+		}
+		cctx, cancel := context.WithTimeout(ctx, timeout)
+		start := time.Now()
+		resp, err := u.Exchange(cctx, dnsmsg.BuildQuery(uint16(i+1), "", dnsmsg.TypeNS))
+		cancel()
+		r.Ms = float64(time.Since(start).Microseconds()) / 1000
+		switch {
+		case err != nil:
+			r.Error = err.Error()
+		case dnsmsg.Rcode(resp) == dnsmsg.RcodeServFail:
+			r.Error = "SERVFAIL"
+		default:
+			r.OK = true
+		}
+		if d, ok := u.(*doh); ok {
+			d.client.CloseIdleConnections()
+		}
+		out = append(out, r)
+	}
+	return out
 }

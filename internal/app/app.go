@@ -47,6 +47,8 @@ type App struct {
 	Engine   *filter.Engine
 	Cache    *cache.Cache
 	Group    *upstream.Group
+	Boot     *upstream.Bootstrap
+	timeout  time.Duration
 	Stats    *stats.Stats
 	Resolver *server.Resolver
 	http     *http.Client
@@ -71,12 +73,19 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	bootstrap := upstream.BootstrapResolver(cfg.Bootstrap)
+	// Servers chosen in the panel (state.json) override the config file.
+	saved := st.get()
+	upSpecs, bsSpecs := cfg.Upstreams, cfg.Bootstrap
+	if len(saved.Upstreams) > 0 {
+		upSpecs, bsSpecs = saved.Upstreams, saved.Bootstrap
+	}
+	boot := upstream.NewBootstrap(bsSpecs)
+	bootstrap := boot.Resolver()
 	timeout := time.Duration(cfg.UpstreamTimeoutMs) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 2 * time.Second
 	}
-	grp, err := upstream.NewGroup(cfg.Upstreams, timeout, bootstrap)
+	grp, err := upstream.NewGroup(upSpecs, timeout, bootstrap)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +125,8 @@ func New(cfg Config) (*App, error) {
 		Engine:     filter.New(),
 		Cache:      cache.New(cfg.CacheSize, cfg.CacheMinTTL, cfg.CacheMaxTTL, cfg.CacheNegTTL),
 		Group:      grp,
+		Boot:       boot,
+		timeout:    timeout,
 		Stats:      stats.New(cfg.QueryLogSize),
 		listStatus: map[string]ListStatus{},
 		sessions:   newSessionStore(),
@@ -137,6 +148,15 @@ func New(cfg Config) (*App, error) {
 
 	s := st.get()
 	a.Engine.SetCustom(s.CustomBlock, s.CustomAllow)
+	strategy := cfg.UpstreamStrategy
+	if s.UpstreamStrategy != "" {
+		strategy = s.UpstreamStrategy // chosen in the panel
+	}
+	st8, err := upstream.ParseStrategy(strategy)
+	if err != nil {
+		return nil, err
+	}
+	a.Group.SetStrategy(st8)
 	if err := a.applyPolicy(context.Background(), true); err != nil {
 		log.Printf("groups: %v (groups disabled until fixed in the panel)", err)
 	}
@@ -180,6 +200,7 @@ func (a *App) Run(ctx context.Context) error {
 	go func() { <-ctx.Done(); close(stop) }()
 	go a.Cache.Janitor(time.Minute, stop)
 	go a.Resolver.Maintenance(ctx)
+	go a.Group.HealthLoop(ctx, 30*time.Second)
 	go a.sessions.gcLoop(ctx)
 
 	udpAddr, err := net.ResolveUDPAddr("udp", a.cfg.DNSListen)

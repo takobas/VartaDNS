@@ -17,6 +17,7 @@ import (
 
 	"github.com/takobas/vartadns/internal/filter"
 	"github.com/takobas/vartadns/internal/stats"
+	"github.com/takobas/vartadns/internal/upstream"
 )
 
 //go:embed static
@@ -50,6 +51,11 @@ func (a *App) routes() http.Handler {
 	api("POST /api/cache/flush", a.hCacheFlush)
 	api("POST /api/password", a.hPassword)
 	api("GET /metrics", a.hMetrics)
+	api("POST /api/upstream/strategy", a.hUpstreamStrategy)
+	api("GET /api/upstreams", a.hUpstreamsGet)
+	api("POST /api/upstreams/test", a.hUpstreamsTest)
+	api("PUT /api/upstreams", a.hUpstreamsSave)
+	api("POST /api/upstreams/reset", a.hUpstreamsReset)
 	api("GET /api/groups", a.hGroupsGet)
 	api("POST /api/groups", a.hGroupsCreate)
 	api("PUT /api/groups", a.hGroupsUpdate)
@@ -204,29 +210,30 @@ func (a *App) hStatus(w http.ResponseWriter, r *http.Request) {
 	last := a.lastUpdate
 	a.statusMu.RUnlock()
 	writeJSON(w, map[string]any{
-		"version":          Version,
-		"uptime_sec":       int64(s.Uptime().Seconds()),
-		"blocking":         a.Resolver.BlockingEnabled(),
-		"disabled_until":   a.Resolver.DisabledUntil(),
-		"total":            s.Total.Load(),
-		"blocked":          s.Blocked.Load(),
-		"cached":           s.Cached.Load(),
-		"errors":           s.Errors.Load(),
-		"refused":          s.Refused.Load(),
-		"qps":              s.QPS(),
-		"rules_block":      blk,
-		"rules_allow":      alw,
-		"custom_block":     len(cb),
-		"custom_allow":     len(ca),
-		"cache_entries":    a.Cache.Len(),
-		"cache_hits":       hits,
-		"cache_misses":     misses,
-		"mem_alloc_mb":     float64(ms.Alloc) / (1 << 20),
-		"mem_sys_mb":       float64(ms.Sys) / (1 << 20),
-		"goroutines":       runtime.NumGoroutine(),
-		"upstreams":        a.Group.Statuses(),
-		"lists_updated_at": last,
-		"admin_user":       a.state.get().AdminUser,
+		"version":           Version,
+		"uptime_sec":        int64(s.Uptime().Seconds()),
+		"blocking":          a.Resolver.BlockingEnabled(),
+		"disabled_until":    a.Resolver.DisabledUntil(),
+		"total":             s.Total.Load(),
+		"blocked":           s.Blocked.Load(),
+		"cached":            s.Cached.Load(),
+		"errors":            s.Errors.Load(),
+		"refused":           s.Refused.Load(),
+		"qps":               s.QPS(),
+		"rules_block":       blk,
+		"rules_allow":       alw,
+		"custom_block":      len(cb),
+		"custom_allow":      len(ca),
+		"cache_entries":     a.Cache.Len(),
+		"cache_hits":        hits,
+		"cache_misses":      misses,
+		"mem_alloc_mb":      float64(ms.Alloc) / (1 << 20),
+		"mem_sys_mb":        float64(ms.Sys) / (1 << 20),
+		"goroutines":        runtime.NumGoroutine(),
+		"upstreams":         a.Group.Statuses(),
+		"upstream_strategy": a.Group.Strategy().String(),
+		"lists_updated_at":  last,
+		"admin_user":        a.state.get().AdminUser,
 	})
 }
 
@@ -450,6 +457,27 @@ func (a *App) refreshAsync() {
 func (a *App) hListsRefresh(w http.ResponseWriter, r *http.Request) {
 	a.refreshAsync()
 	writeJSON(w, map[string]bool{"started": true})
+}
+
+func (a *App) hUpstreamStrategy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Strategy string `json:"strategy"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	st, err := upstream.ParseStrategy(req.Strategy)
+	if err != nil || req.Strategy == "" {
+		jsonErr(w, http.StatusBadRequest, "strategy must be encrypted-first or fastest")
+		return
+	}
+	if err := a.state.update(func(s *State) { s.UpstreamStrategy = st.String() }); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.Group.SetStrategy(st)
+	writeJSON(w, map[string]any{"upstream_strategy": st.String(), "upstreams": a.Group.Statuses()})
 }
 
 func (a *App) hCacheFlush(w http.ResponseWriter, r *http.Request) {

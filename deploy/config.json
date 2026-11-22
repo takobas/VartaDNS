@@ -10,6 +10,7 @@
   ],
   "bootstrap_dns": ["9.9.9.9", "149.112.112.112"],
   "upstream_timeout_ms": 2000,
+  "upstream_strategy": "encrypted-first",
   "conditional_forwarding": {},
   "block_mode": "null",
   "blocked_ttl": 60,
@@ -28,7 +29,7 @@
   "default_lists": [
     {"name": "HaGeZi Pro", "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt", "enabled": true},
     {"name": "HaGeZi Threat Intelligence", "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.txt", "enabled": true},
-    {"name": "URLhaus (malware)", "url": "https://urlhaus.abuse.ch/downloads/hostfile/", "enabled": true},
+    {"name": "URLhaus (malware-filter)", "url": "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts-online.txt", "enabled": true},
     {"name": "Phishing Army", "url": "https://phishing.army/download/phishing_army_blocklist.txt", "enabled": true}
   ]
 }

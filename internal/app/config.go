@@ -31,6 +31,7 @@ type Config struct {
 	Upstreams         []string          `json:"upstreams"`
 	Bootstrap         []string          `json:"bootstrap_dns"`
 	UpstreamTimeoutMs int               `json:"upstream_timeout_ms"`
+	UpstreamStrategy  string            `json:"upstream_strategy"` // "encrypted-first" (default) or "fastest"
 	Conditional       map[string]string `json:"conditional_forwarding"`
 	BlockMode         string            `json:"block_mode"` // "null" or "nxdomain"
 	BlockedTTL        uint32            `json:"blocked_ttl"`
@@ -60,6 +61,7 @@ func DefaultConfig() Config {
 		Upstreams:         []string{"https://dns.quad9.net/dns-query", "9.9.9.9", "149.112.112.112"},
 		Bootstrap:         []string{"9.9.9.9", "149.112.112.112"},
 		UpstreamTimeoutMs: 2000,
+		UpstreamStrategy:  "encrypted-first",
 		BlockMode:         "null",
 		BlockedTTL:        60,
 		CacheSize:         100000,
@@ -77,7 +79,7 @@ func DefaultConfig() Config {
 		DefaultLists: []ListSpec{
 			{Name: "HaGeZi Pro", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt", Enabled: true},
 			{Name: "HaGeZi Threat Intelligence", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.txt", Enabled: true},
-			{Name: "URLhaus (malware)", URL: "https://urlhaus.abuse.ch/downloads/hostfile/", Enabled: true},
+			{Name: "URLhaus (malware-filter)", URL: "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts-online.txt", Enabled: true},
 			{Name: "Phishing Army", URL: "https://phishing.army/download/phishing_army_blocklist.txt", Enabled: true},
 		},
 	}
@@ -102,7 +104,7 @@ func ApplyProfile(c *Config, profile string) error {
 		c.DefaultLists = []ListSpec{
 			{Name: "HaGeZi Light", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/light.txt", Enabled: true},
 			{Name: "HaGeZi Threat Intelligence Mini", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.mini.txt", Enabled: true},
-			{Name: "URLhaus (malware)", URL: "https://urlhaus.abuse.ch/downloads/hostfile/", Enabled: true},
+			{Name: "URLhaus (malware-filter)", URL: "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts-online.txt", Enabled: true},
 			{Name: "Phishing Army", URL: "https://phishing.army/download/phishing_army_blocklist.txt", Enabled: true},
 		}
 		c.CacheSize = 20000
@@ -157,6 +159,38 @@ func parsePrefixes(list []string) ([]netip.Prefix, error) {
 	return out, nil
 }
 
+// Blocklist URLs that stopped working upstream, mapped to their replacements.
+// Saved states are migrated on start so existing installs keep working.
+var listURLMigrations = map[string]ListSpec{
+	// abuse.ch now requires an auth key; the public hostfile returns HTTP 410.
+	// malware-filter publishes the same URLhaus data as a hosts file.
+	"https://urlhaus.abuse.ch/downloads/hostfile/": {
+		Name: "URLhaus (malware-filter)",
+		URL:  "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts-online.txt",
+	},
+}
+
+// migrateLists replaces dead list URLs and drops duplicates that the
+// replacement may create. It reports whether anything changed.
+func migrateLists(lists []ListSpec) ([]ListSpec, bool) {
+	changed := false
+	seen := map[string]bool{}
+	out := make([]ListSpec, 0, len(lists))
+	for _, l := range lists {
+		if repl, ok := listURLMigrations[l.URL]; ok {
+			l.Name, l.URL = repl.Name, repl.URL
+			changed = true
+		}
+		if seen[l.URL] {
+			changed = true
+			continue
+		}
+		seen[l.URL] = true
+		out = append(out, l)
+	}
+	return out, changed
+}
+
 // ---- persistent state (edited from the web panel) -------------------------------
 
 // State is stored in <data_dir>/state.json.
@@ -167,6 +201,11 @@ type State struct {
 	PasswordHash string         `json:"password_hash"` // salt$sha256hex
 	AdminUser    string         `json:"admin_user"`
 	Groups       []policy.Group `json:"groups"`
+	// Upstreams/Bootstrap override the config file once saved in the panel.
+	Upstreams []string `json:"upstreams,omitempty"`
+	Bootstrap []string `json:"bootstrap,omitempty"`
+	// UpstreamStrategy overrides the config value once set from the panel.
+	UpstreamStrategy string `json:"upstream_strategy,omitempty"`
 }
 
 type stateStore struct {
@@ -192,6 +231,12 @@ func loadState(dir string, defaults []ListSpec) (*stateStore, bool, error) {
 	if st.s.AdminUser == "" {
 		st.s.AdminUser = "admin"
 	}
+	if lists, changed := migrateLists(st.s.Lists); changed {
+		st.s.Lists = lists
+		if err := st.saveLocked(); err != nil {
+			return nil, false, err
+		}
+	}
 	return st, false, nil
 }
 
@@ -203,6 +248,8 @@ func (st *stateStore) get() State {
 	s.CustomBlock = append([]string(nil), st.s.CustomBlock...)
 	s.CustomAllow = append([]string(nil), st.s.CustomAllow...)
 	s.Groups = append([]policy.Group(nil), st.s.Groups...)
+	s.Upstreams = append([]string(nil), st.s.Upstreams...)
+	s.Bootstrap = append([]string(nil), st.s.Bootstrap...)
 	return s
 }
 

@@ -78,3 +78,5 @@ textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px s
 .win-row input[type=time] { width: 110px; }
 .spaced { margin-top: 12px; }
 label.inline span { color: var(--text); }
+label.radio { margin-top: 6px; }
+label.radio + p { margin: 2px 0 8px 24px; }

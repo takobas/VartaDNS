@@ -40,6 +40,17 @@ const I18N = {
     cache: 'Кеш', cache_flush: 'Очистити кеш', cache_flushed: 'Кеш очищено',
     pw_title: 'Змінити пароль', pw_old: 'Поточний пароль', pw_new: 'Новий пароль (мін. 8 символів)',
     save: 'Зберегти', pw_changed: 'Пароль змінено, увійдіть знову',
+    us_title: 'Upstream-сервери', us_help: 'Куди VartaDNS пересилає запити, які не заблоковані. По одному в рядку: IP (1.1.1.1), IP:порт (192.168.11.1:53), tcp://IP:порт або DoH (https://…/dns-query). Bootstrap — звичайні IP-адреси, через які VartaDNS дізнається адреси DoH-серверів.',
+    us_servers: 'Сервери', us_bootstrap: 'Bootstrap DNS (тільки IP)', us_use_preset: 'Підставити набір',
+    us_test: 'Перевірити', us_save: 'Зберегти', us_reset: 'Скинути до заводських', us_result: 'Результат',
+    us_custom: 'зараз: власні налаштування', us_factory: 'зараз: заводські налаштування', us_saved: 'Збережено й застосовано',
+    us_none_ok: 'Жоден сервер не відповів — не збережено', us_choose: '— набір —', us_reset_done: 'Повернуто заводські сервери',
+    preset_quad9: 'блокує шкідливі домени', preset_cloudflare: 'найшвидший, без фільтрації', preset_cf_security: 'блокує шкідливі домени',
+    preset_cf_family: 'шкідливі + дорослий контент', preset_google: 'без фільтрації', preset_adguard: 'блокує рекламу і трекери',
+    up_title: 'DNS-запити в інтернет', up_enc: 'Спершу шифровано (DoH)', up_fast: 'Найшвидший сервер',
+    up_enc_help: 'Запити йдуть через зашифрований DNS-over-HTTPS. Звичайний DNS — лише запасний, якщо DoH не відповідає. Трохи повільніше, але провайдер не бачить і не може підмінити запити.',
+    up_fast_help: 'Запити йдуть на найшвидший робочий сервер, зазвичай звичайний DNS без шифрування. Швидше, але запити видно на шляху.',
+    up_saved: 'Збережено', up_primary: 'основний', up_encrypted: 'шифровано',
     tab_groups: 'Групи', col_group: 'Група', f_safesearch: 'Безпечний пошук', st_safesearch: 'безпечний пошук',
     g_new: 'Нова група', g_help: 'Членство: окремі IP, діапазони (192.168.11.50-192.168.11.69) або підмережі (192.168.11.64/27) через кому. Якщо IP входить у кілька груп, діє перша зверху. Нова група нічого не блокує, поки ви не ввімкнете правила.',
     g_name_ph: 'Назва, напр. Діти', g_members_ph: '192.168.11.50, 192.168.11.100-192.168.11.110', g_create: 'Створити',
@@ -95,6 +106,17 @@ const I18N = {
     cache: 'Cache', cache_flush: 'Flush cache', cache_flushed: 'Cache flushed',
     pw_title: 'Change password', pw_old: 'Current password', pw_new: 'New password (min. 8 characters)',
     save: 'Save', pw_changed: 'Password changed, please sign in again',
+    us_title: 'Upstream servers', us_help: 'Where VartaDNS forwards queries that are not blocked. One per line: IP (1.1.1.1), IP:port (192.168.11.1:53), tcp://IP:port or DoH (https://…/dns-query). Bootstrap: plain IP addresses used to look up DoH server names.',
+    us_servers: 'Servers', us_bootstrap: 'Bootstrap DNS (IP only)', us_use_preset: 'Use preset',
+    us_test: 'Test', us_save: 'Save', us_reset: 'Reset to defaults', us_result: 'Result',
+    us_custom: 'now: custom settings', us_factory: 'now: factory defaults', us_saved: 'Saved and applied',
+    us_none_ok: 'No server answered - not saved', us_choose: '- preset -', us_reset_done: 'Factory servers restored',
+    preset_quad9: 'blocks malicious domains', preset_cloudflare: 'fastest, no filtering', preset_cf_security: 'blocks malicious domains',
+    preset_cf_family: 'malicious + adult content', preset_google: 'no filtering', preset_adguard: 'blocks ads and trackers',
+    up_title: 'Upstream DNS', up_enc: 'Encrypted first (DoH)', up_fast: 'Fastest server',
+    up_enc_help: 'Queries go over encrypted DNS-over-HTTPS. Plain DNS is only a fallback when DoH does not answer. Slightly slower, but nobody on the path can see or tamper with queries.',
+    up_fast_help: 'Queries go to the fastest healthy server, usually plain unencrypted DNS. Faster, but queries are visible on the path.',
+    up_saved: 'Saved', up_primary: 'primary', up_encrypted: 'encrypted',
     tab_groups: 'Groups', col_group: 'Group', f_safesearch: 'SafeSearch', st_safesearch: 'safesearch',
     g_new: 'New group', g_help: 'Members: single IPs, ranges (192.168.11.50-192.168.11.69) or subnets (192.168.11.64/27), comma-separated. If an IP is in several groups, the first one from the top wins. A new group blocks nothing until you enable rules.',
     g_name_ph: 'Name, e.g. Kids', g_members_ph: '192.168.11.50, 192.168.11.100-192.168.11.110', g_create: 'Create',
@@ -223,7 +245,8 @@ $('#logout').addEventListener('click', async () => { await api('POST', '/api/log
 // ---- tabs -----------------------------------------------------------------------
 let current = 'dash';
 function refreshCurrent() {
-  ({ dash: refreshDash, log: refreshLog, rules: refreshRules, groups: refreshGroups, lists: refreshLists, settings: refreshStatus })[current]();
+  ({ dash: refreshDash, log: refreshLog, rules: refreshRules, groups: refreshGroups, lists: refreshLists,
+    settings: () => { refreshStatus(); refreshUpstreams(); } })[current]();
 }
 $$('nav button').forEach((b) => b.addEventListener('click', () => {
   $$('nav button').forEach((x) => x.classList.toggle('active', x === b));
@@ -238,6 +261,7 @@ async function refreshStatus() {
   $('#ver').textContent = 'v' + s.version;
   const st = $('#blocking-state');
   st.className = 'pill ' + (s.blocking ? 'on' : 'off');
+  $$('input[name=up-strategy]').forEach((r) => { r.checked = r.value === s.upstream_strategy; });
   st.textContent = s.blocking ? t('protect_on') :
     (t('protect_off') + (isZeroTime(s.disabled_until) ? '' : ' ' + t('until') + ' ' + time(s.disabled_until)));
   return s;
@@ -263,7 +287,9 @@ async function refreshDash() {
     fillTop('#top-clients', top.clients);
     const ub = $('#upstreams'); ub.replaceChildren();
     for (const u of s.upstreams) {
-      ub.append(el('tr', {}, el('td', { text: u.name }), el('td', { text: u.latency_ms.toFixed(1) + ' ' + t('ms') }),
+      const tags = [u.encrypted ? '🔒 ' + t('up_encrypted') : '', u.primary ? '★ ' + t('up_primary') : ''].filter(Boolean).join(' · ');
+      ub.append(el('tr', {}, el('td', {}, el('div', { text: u.name }), el('div', { class: 'muted', text: tags })),
+        el('td', { text: u.latency_ms.toFixed(1) + ' ' + t('ms') }),
         el('td', { class: u.healthy ? 'st-cached' : 'st-blocked', text: u.healthy ? 'OK' : t('fails') + ': ' + u.fails })));
     }
   } catch (e) { if (e.message !== 'unauthorized') console.error(e); }
@@ -405,6 +431,62 @@ $('#list-add').addEventListener('submit', async (e) => {
   } catch (err) { toast(err.message); }
 });
 
+// ---- upstream servers ----
+let usData = null;
+async function refreshUpstreams() {
+  try { usData = await api('GET', '/api/upstreams'); } catch (e) { return; }
+  $('#us-servers').value = usData.upstreams.join('\n');
+  $('#us-bootstrap').value = usData.bootstrap.join('\n');
+  $('#us-state').textContent = t(usData.custom ? 'us_custom' : 'us_factory');
+  const sel = $('#us-preset');
+  const cur = sel.value;
+  sel.replaceChildren(el('option', { value: '', text: t('us_choose') }),
+    ...usData.presets.map((p) => el('option', { value: p.id, text: p.name })));
+  sel.value = cur;
+}
+function usBody() {
+  return { upstreams: splitList($('#us-servers').value), bootstrap: splitList($('#us-bootstrap').value) };
+}
+function showResults(results) {
+  const tbl = $('#us-results');
+  tbl.classList.remove('hidden');
+  const tb = tbl.querySelector('tbody');
+  tb.replaceChildren();
+  for (const r of results || []) {
+    tb.append(el('tr', {}, el('td', { text: r.server }),
+      el('td', { class: r.ok ? 'st-cached' : 'st-blocked', text: r.ok ? 'OK' : (r.error || 'error') }),
+      el('td', { text: r.ok ? r.ms.toFixed(1) + ' ' + t('ms') : '' })));
+  }
+}
+$('#us-preset').addEventListener('change', () => {
+  const p = (usData?.presets || []).find((x) => x.id === $('#us-preset').value);
+  $('#us-preset-note').textContent = p ? t(p.note) : '';
+});
+$('#us-apply-preset').addEventListener('click', () => {
+  const p = (usData?.presets || []).find((x) => x.id === $('#us-preset').value);
+  if (!p) return;
+  $('#us-servers').value = p.upstreams.join('\n');
+  $('#us-bootstrap').value = p.bootstrap.join('\n');
+});
+$('#us-test').addEventListener('click', async () => {
+  try { showResults((await api('POST', '/api/upstreams/test', usBody())).results); }
+  catch (e) { toast(e.message); }
+});
+$('#us-save').addEventListener('click', async () => {
+  const opt = { method: 'PUT', headers: { 'X-Varta': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(usBody()) };
+  const r = await fetch('/api/upstreams', opt);
+  const data = await r.json().catch(() => ({}));
+  if (data.results) showResults(data.results);
+  if (r.status === 422) { toast(t('us_none_ok')); return; }
+  if (!r.ok) { toast(data.error || ('HTTP ' + r.status)); return; }
+  toast(t('us_saved'));
+  refreshUpstreams();
+});
+$('#us-reset').addEventListener('click', async () => {
+  try { await api('POST', '/api/upstreams/reset'); toast(t('us_reset_done')); $('#us-results').classList.add('hidden'); refreshUpstreams(); }
+  catch (e) { toast(e.message); }
+});
+
 // ---- settings ----------------------------------------------------------------------------------
 async function setBlocking(enabled, minutes = 0) {
   try {
@@ -416,6 +498,10 @@ async function setBlocking(enabled, minutes = 0) {
 $('#block-on').addEventListener('click', () => setBlocking(true));
 $('#block-off').addEventListener('click', () => setBlocking(false));
 $$('[data-pause]').forEach((b) => b.addEventListener('click', () => setBlocking(false, +b.dataset.pause)));
+$$('input[name=up-strategy]').forEach((r) => r.addEventListener('change', async () => {
+  try { await api('POST', '/api/upstream/strategy', { strategy: r.value }); toast(t('up_saved')); }
+  catch (e) { toast(e.message); refreshStatus(); }
+}));
 $('#cache-flush').addEventListener('click', async () => { await api('POST', '/api/cache/flush').catch(() => {}); toast(t('cache_flushed')); });
 $('#pw-form').addEventListener('submit', async (e) => {
   e.preventDefault();
