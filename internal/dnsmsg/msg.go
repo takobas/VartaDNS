@@ -621,3 +621,106 @@ func BuildCNAME(query []byte, q Query, target string, ttl uint32, ips [][]byte) 
 	}
 	return out
 }
+
+// AnswerPTR returns the first PTR target in the answer section of m.
+func AnswerPTR(m []byte) (string, error) {
+	if len(m) < headerLen {
+		return "", ErrShort
+	}
+	off := headerLen
+	for i := 0; i < qdcount(m); i++ {
+		var err error
+		if off, err = skipName(m, off); err != nil {
+			return "", err
+		}
+		off += 4
+	}
+	for i := 0; i < ancount(m); i++ {
+		var err error
+		if off, err = skipName(m, off); err != nil {
+			return "", err
+		}
+		if off+10 > len(m) {
+			return "", ErrShort
+		}
+		typ := binary.BigEndian.Uint16(m[off:])
+		rdlen := int(binary.BigEndian.Uint16(m[off+8:]))
+		rdata := off + 10
+		if rdata+rdlen > len(m) {
+			return "", ErrShort
+		}
+		if typ == TypePTR {
+			name, _, err := readName(m, rdata)
+			return name, err
+		}
+		off = rdata + rdlen
+	}
+	return "", nil
+}
+
+// BuildAddress answers an A/AAAA query with ip when the family matches
+// (other types and families get an empty NOERROR answer).
+func BuildAddress(query []byte, q Query, ip []byte, ttl uint32) []byte {
+	ok := (q.Type == TypeA && len(ip) == 4) || (q.Type == TypeAAAA && len(ip) == 16)
+	an := uint16(0)
+	if ok {
+		an = 1
+	}
+	out := make([]byte, 0, 64)
+	out = header(out, query, RcodeSuccess, an)
+	out = appendRawQuestion(out, query, q)
+	if ok {
+		out = append(out, 0xC0, 0x0C)
+		out = binary.BigEndian.AppendUint16(out, q.Type)
+		out = binary.BigEndian.AppendUint16(out, ClassINET)
+		out = binary.BigEndian.AppendUint32(out, ttl)
+		out = binary.BigEndian.AppendUint16(out, uint16(len(ip)))
+		out = append(out, ip...)
+	}
+	return out
+}
+
+// AnswerTXT returns the TXT strings (joined per record) of the answer section.
+func AnswerTXT(m []byte) ([]string, error) {
+	if len(m) < headerLen {
+		return nil, ErrShort
+	}
+	off := headerLen
+	for i := 0; i < qdcount(m); i++ {
+		var err error
+		if off, err = skipName(m, off); err != nil {
+			return nil, err
+		}
+		off += 4
+	}
+	var out []string
+	for i := 0; i < ancount(m); i++ {
+		var err error
+		if off, err = skipName(m, off); err != nil {
+			return out, err
+		}
+		if off+10 > len(m) {
+			return out, ErrShort
+		}
+		typ := binary.BigEndian.Uint16(m[off:])
+		rdlen := int(binary.BigEndian.Uint16(m[off+8:]))
+		rd := off + 10
+		if rd+rdlen > len(m) {
+			return out, ErrShort
+		}
+		if typ == TypeTXT {
+			var s []byte
+			for p := rd; p < rd+rdlen; {
+				l := int(m[p])
+				if p+1+l > rd+rdlen {
+					break
+				}
+				s = append(s, m[p+1:p+1+l]...)
+				p += 1 + l
+			}
+			out = append(out, string(s))
+		}
+		off = rd + rdlen
+	}
+	return out, nil
+}

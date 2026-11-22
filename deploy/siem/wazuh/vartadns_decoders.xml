@@ -1,0 +1,15 @@
+<!--
+  VartaDNS decoders for Wazuh 4.x.
+  Copy to /var/ossec/etc/decoders/ on the Wazuh manager and restart it.
+  VartaDNS sends RFC 5424 lines: "<pri>1 <time> <host> vartadns - QUERY - {json}".
+  NOTE: written against the Wazuh decoder syntax, not tested on a live manager.
+  Check with: /var/ossec/bin/wazuh-logtest
+-->
+<decoder name="vartadns">
+  <prematch>vartadns - QUERY - |vartadns - AUDIT - </prematch>
+</decoder>
+
+<decoder name="vartadns-json">
+  <parent>vartadns</parent>
+  <plugin_decoder offset="after_parent">JSON_Decoder</plugin_decoder>
+</decoder>

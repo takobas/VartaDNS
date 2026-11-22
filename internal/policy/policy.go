@@ -42,6 +42,9 @@ type Group struct {
 	InternetOff bool      `json:"internet_off"`
 	OffUntil    time.Time `json:"off_until"` // zero = until switched on manually
 	Schedule    Schedule  `json:"schedule"`
+	// SkipKinds lists the kinds of general blocklists NOT applied to this
+	// group (e.g. ["ads"] = protection without ad blocking). Empty = all.
+	SkipKinds []string `json:"skip_kinds,omitempty"`
 }
 
 // ---- membership -------------------------------------------------------------------

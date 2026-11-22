@@ -19,18 +19,21 @@ const (
 	StatusError      = "error"
 	StatusRefused    = "refused"
 	StatusSafeSearch = "safesearch"
+	StatusLocal      = "local" // answered by VartaDNS itself (its DoH/DoT hostname)
 )
 
 // Entry is one query log record.
 type Entry struct {
 	Time     time.Time `json:"time"`
 	Client   string    `json:"client"`
+	Device   string    `json:"device,omitempty"` // device name at query time
 	Group    string    `json:"group,omitempty"`
 	Name     string    `json:"name"`
 	Type     string    `json:"type"`
 	Status   string    `json:"status"`
 	Rule     string    `json:"rule,omitempty"`
 	Source   string    `json:"source,omitempty"`
+	Kind     string    `json:"kind,omitempty"` // malware, phishing, ads, custom, parental, other
 	Upstream string    `json:"upstream,omitempty"`
 	Rcode    int       `json:"rcode"`
 	Micros   int64     `json:"us"`
@@ -166,7 +169,8 @@ func (s *Stats) Log(f Filter) []Entry {
 		if f.Group != "" && e.Group != f.Group {
 			continue
 		}
-		if search != "" && !strings.Contains(e.Name, search) && !strings.Contains(e.Client, search) {
+		if search != "" && !strings.Contains(e.Name, search) && !strings.Contains(e.Client, search) &&
+			!strings.Contains(strings.ToLower(e.Device), search) {
 			continue
 		}
 		out = append(out, e)

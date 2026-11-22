@@ -2,10 +2,7 @@ package app
 
 import (
 	"context"
-	"crypto/pbkdf2"
-	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -22,10 +19,14 @@ import (
 	"time"
 
 	"github.com/takobas/vartadns/internal/cache"
+	"github.com/takobas/vartadns/internal/devices"
 	"github.com/takobas/vartadns/internal/dnsmsg"
 	"github.com/takobas/vartadns/internal/filter"
+	"github.com/takobas/vartadns/internal/notify"
+	"github.com/takobas/vartadns/internal/qlog"
 	"github.com/takobas/vartadns/internal/server"
 	"github.com/takobas/vartadns/internal/stats"
+	"github.com/takobas/vartadns/internal/syslog"
 	"github.com/takobas/vartadns/internal/upstream"
 )
 
@@ -62,6 +63,17 @@ type App struct {
 
 	catMu      sync.Mutex                           // serialises category loads
 	categories atomic.Pointer[map[string]*catState] // loaded category lists
+
+	QLog    *qlog.Log
+	TG      *notify.Telegram
+	Devices *devices.Tracker
+	kinds   atomic.Pointer[map[string]string] // list name -> kind
+	daily   *counters
+	audit   *auditLog
+	tls     *tlsState
+	handler http.Handler // panel handler shared by the HTTP and HTTPS listeners
+	enc     *encState
+	Syslog  *syslog.Sender
 }
 
 // New builds the application from a config.
@@ -130,6 +142,9 @@ func New(cfg Config) (*App, error) {
 		Stats:      stats.New(cfg.QueryLogSize),
 		listStatus: map[string]ListStatus{},
 		sessions:   newSessionStore(),
+		audit:      newAuditLog(cfg.DataDir),
+		tls:        &tlsState{},
+		enc:        &encState{},
 	}
 	a.http = &http.Client{
 		Timeout: 60 * time.Second,
@@ -147,6 +162,9 @@ func New(cfg Config) (*App, error) {
 	}, a.Engine, a.Cache, a.Group, a.Stats)
 
 	s := st.get()
+	if err := a.initExtras(s); err != nil {
+		return nil, err
+	}
 	a.Engine.SetCustom(s.CustomBlock, s.CustomAllow)
 	strategy := cfg.UpstreamStrategy
 	if s.UpstreamStrategy != "" {
@@ -161,13 +179,17 @@ func New(cfg Config) (*App, error) {
 		log.Printf("groups: %v (groups disabled until fixed in the panel)", err)
 	}
 
-	if fresh || s.PasswordHash == "" || os.Getenv("VARTA_RESET_PASSWORD") == "1" {
+	if err := a.migrateUsers(); err != nil {
+		return nil, err
+	}
+	if fresh || len(a.state.get().Users) == 0 || os.Getenv("VARTA_RESET_PASSWORD") == "1" {
 		pw := randomToken(9)
-		if err := a.SetPassword(pw); err != nil {
+		name := a.state.get().AdminUser
+		if err := a.SetUserPassword(name, pw, RoleAdmin); err != nil {
 			return nil, err
 		}
 		log.Printf("==============================================================")
-		log.Printf(" Web panel first-run credentials:  admin / %s", pw)
+		log.Printf(" Web panel first-run credentials:  %s / %s", name, pw)
 		log.Printf(" Change the password in the panel (Settings).")
 		log.Printf("==============================================================")
 	}
@@ -202,6 +224,18 @@ func (a *App) Run(ctx context.Context) error {
 	go a.Resolver.Maintenance(ctx)
 	go a.Group.HealthLoop(ctx, 30*time.Second)
 	go a.sessions.gcLoop(ctx)
+	// Optional features: a failure there must never stop DNS.
+	safeGo(ctx, "query log", a.QLog.Run)
+	safeGo(ctx, "telegram", a.TG.Run)
+	safeGo(ctx, "devices", a.Devices.Run)
+	safeGo(ctx, "upstream watch", a.watchUpstreams)
+	safeGo(ctx, "scheduler", a.scheduler)
+	safeGo(ctx, "syslog", a.Syslog.Run)
+	if err := a.applyEnc(); err != nil {
+		log.Printf("encrypted DNS: %v", err)
+	}
+	safeGo(ctx, "encrypted dns", a.encLoop)
+	safeGo(ctx, "telegram bot", func(ctx context.Context) { a.TG.Poll(ctx, a.botCommand) })
 
 	udpAddr, err := net.ResolveUDPAddr("udp", a.cfg.DNSListen)
 	if err != nil {
@@ -225,9 +259,10 @@ func (a *App) Run(ctx context.Context) error {
 	go a.Resolver.ServeTCP(ctx, tln)
 	log.Printf("DNS listening on %s (udp/tcp), %d UDP workers", a.cfg.DNSListen, workers)
 
+	a.handler = a.redirectHTTPS(a.routes())
 	web := &http.Server{
 		Addr:              a.cfg.WebListen,
-		Handler:           a.routes(),
+		Handler:           a.handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -239,8 +274,12 @@ func (a *App) Run(ctx context.Context) error {
 			errc <- err
 		}
 	}()
+	if err := a.applyTLS(); err != nil {
+		log.Printf("panel HTTPS: %v (HTTP panel keeps working)", err)
+	}
 	select {
 	case <-ctx.Done():
+		a.stopTLS()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = web.Shutdown(sctx)
@@ -248,6 +287,18 @@ func (a *App) Run(ctx context.Context) error {
 	case err := <-errc:
 		return err
 	}
+}
+
+// safeGo runs fn in a goroutine and logs (instead of crashing on) a panic.
+func safeGo(ctx context.Context, name string, fn func(context.Context)) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("%s stopped after an internal error: %v", name, r)
+			}
+		}()
+		fn(ctx)
+	}()
 }
 
 // ---- lists ----------------------------------------------------------------------------
@@ -334,6 +385,13 @@ func (a *App) RebuildLists(ctx context.Context, network bool) {
 			totalBytes += fi.Size()
 		}
 	}
+	kinds := map[string]string{}
+	for _, spec := range specs {
+		if !spec.Allow {
+			kinds[spec.Name] = spec.Kind
+		}
+	}
+	a.kinds.Store(&kinds)
 	b := filter.NewBuilder(int(totalBytes / 20))
 	status := map[string]ListStatus{}
 	for _, spec := range specs {
@@ -348,7 +406,7 @@ func (a *App) RebuildLists(ctx context.Context, network bool) {
 				ls.Error = err.Error()
 			}
 		} else {
-			n, perr := b.Add(spec.Name, rc, spec.Allow)
+			n, perr := b.AddClass(spec.Name, rc, spec.Allow, filter.KindClass(spec.Kind))
 			rc.Close()
 			ls.Rules = n
 			if perr != nil {
@@ -392,153 +450,4 @@ func (a *App) ListStatuses() []ListStatus {
 	return out
 }
 
-// ---- auth -------------------------------------------------------------------------------
-
-const pbkdf2Iter = 120000
-
-func hashPassword(pw string, salt []byte) (string, error) {
-	k, err := pbkdf2.Key(sha256.New, pw, salt, pbkdf2Iter, 32)
-	if err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(salt) + "$" + hex.EncodeToString(k), nil
-}
-
-// SetPassword stores a new admin password hash.
-func (a *App) SetPassword(pw string) error {
-	if len(pw) < 8 {
-		return errors.New("password must be at least 8 characters")
-	}
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return err
-	}
-	h, err := hashPassword(pw, salt)
-	if err != nil {
-		return err
-	}
-	return a.state.update(func(s *State) { s.PasswordHash = h })
-}
-
-func (a *App) checkPassword(user, pw string) bool {
-	s := a.state.get()
-	parts := strings.SplitN(s.PasswordHash, "$", 2)
-	if len(parts) != 2 {
-		return false
-	}
-	salt, err := hex.DecodeString(parts[0])
-	if err != nil {
-		return false
-	}
-	h, err := hashPassword(pw, salt)
-	if err != nil {
-		return false
-	}
-	okUser := subtle.ConstantTimeCompare([]byte(user), []byte(s.AdminUser)) == 1
-	okPass := subtle.ConstantTimeCompare([]byte(h), []byte(s.PasswordHash)) == 1
-	return okUser && okPass
-}
-
-func randomToken(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	const alphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	out := make([]byte, n)
-	for i, v := range b {
-		out[i] = alphabet[int(v)%len(alphabet)]
-	}
-	return string(out)
-}
-
-type sessionStore struct {
-	mu       sync.Mutex
-	sessions map[string]time.Time
-	fails    map[string][]time.Time // login failures per client IP
-}
-
-func newSessionStore() *sessionStore {
-	return &sessionStore{sessions: map[string]time.Time{}, fails: map[string][]time.Time{}}
-}
-
-const sessionTTL = 12 * time.Hour
-
-func (s *sessionStore) create() string {
-	b := make([]byte, 32)
-	_, _ = rand.Read(b)
-	tok := hex.EncodeToString(b)
-	s.mu.Lock()
-	s.sessions[tok] = time.Now().Add(sessionTTL)
-	s.mu.Unlock()
-	return tok
-}
-
-func (s *sessionStore) valid(tok string) bool {
-	if tok == "" {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	exp, ok := s.sessions[tok]
-	if !ok || time.Now().After(exp) {
-		delete(s.sessions, tok)
-		return false
-	}
-	return true
-}
-
-func (s *sessionStore) drop(tok string) {
-	s.mu.Lock()
-	delete(s.sessions, tok)
-	s.mu.Unlock()
-}
-
-func (s *sessionStore) dropAll() {
-	s.mu.Lock()
-	s.sessions = map[string]time.Time{}
-	s.mu.Unlock()
-}
-
-// lockedOut reports whether ip had 5+ failed logins in the last 10 minutes.
-func (s *sessionStore) lockedOut(ip string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cut := time.Now().Add(-10 * time.Minute)
-	keep := s.fails[ip][:0]
-	for _, t := range s.fails[ip] {
-		if t.After(cut) {
-			keep = append(keep, t)
-		}
-	}
-	s.fails[ip] = keep
-	return len(keep) >= 5
-}
-
-func (s *sessionStore) fail(ip string) {
-	s.mu.Lock()
-	s.fails[ip] = append(s.fails[ip], time.Now())
-	s.mu.Unlock()
-}
-
-func (s *sessionStore) gcLoop(ctx context.Context) {
-	t := time.NewTicker(10 * time.Minute)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-t.C:
-			s.mu.Lock()
-			for k, exp := range s.sessions {
-				if now.After(exp) {
-					delete(s.sessions, k)
-				}
-			}
-			for k, v := range s.fails {
-				if len(v) == 0 || now.Sub(v[len(v)-1]) > 10*time.Minute {
-					delete(s.fails, k)
-				}
-			}
-			s.mu.Unlock()
-		}
-	}
-}
+// Authentication, users and sessions live in users.go.

@@ -130,8 +130,9 @@
 
 # ---- 7. Block encrypted DNS that would bypass the filter --------------------------
 # DoT / DoQ (port 853) from LAN. tcp-reset makes clients fall back at once.
+# VartaDNS itself is exempt (its own DoT for clients, if enabled in the panel).
 /ip/firewall/filter/add chain=forward in-interface-list=LAN protocol=tcp dst-port=853 \
-    action=reject reject-with=tcp-reset comment="VartaDNS: block DoT"
+    dst-address=!172.17.53.2 action=reject reject-with=tcp-reset comment="VartaDNS: block DoT"
 /ip/firewall/filter/add chain=forward in-interface-list=LAN protocol=udp dst-port=853 \
     action=drop comment="VartaDNS: block DoQ"
 
@@ -170,9 +171,9 @@ add list=doh-servers address=45.90.30.0/24 comment="NextDNS"
 /ipv6/firewall/filter/add chain=forward in-interface-list=LAN protocol=udp dst-port=853 \
     action=drop comment="VartaDNS: block IPv6 DoQ"
 
-# ---- 9. Protect the web panel: only the admin subnet may open :8080 ------------------
+# ---- 9. Protect the web panel: only the admin subnet may open :8080 and :8443 (HTTPS)
 # EDIT: 192.168.88.0/24 -> your admin subnet.
-/ip/firewall/filter/add chain=forward protocol=tcp dst-address=172.17.53.2 dst-port=8080 \
+/ip/firewall/filter/add chain=forward protocol=tcp dst-address=172.17.53.2 dst-port=8080,8443 \
     src-address=!192.168.88.0/24 action=drop comment="VartaDNS: panel admin-only"
 
 # ---- IMPORTANT: rule order ------------------------------------------------------------

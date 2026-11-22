@@ -23,3 +23,25 @@ func TestMigrateLists(t *testing.T) {
 		t.Fatal("reported a change on an already migrated list")
 	}
 }
+
+func TestGuessKind(t *testing.T) {
+	for _, l := range DefaultConfig().DefaultLists {
+		k := l.Kind
+		l.Kind = ""
+		if g := guessKind(l); g != k {
+			t.Errorf("%s: guessed %s, want %s", l.Name, g, k)
+		}
+	}
+	light := DefaultConfig()
+	ApplyProfile(&light, "light")
+	for _, l := range light.DefaultLists {
+		k := l.Kind
+		l.Kind = ""
+		if g := guessKind(l); g != k {
+			t.Errorf("%s: guessed %s, want %s", l.Name, g, k)
+		}
+	}
+	if guessKind(ListSpec{Name: "my", URL: "https://x.example/list.txt"}) != KindOther {
+		t.Error("unknown list must be other")
+	}
+}

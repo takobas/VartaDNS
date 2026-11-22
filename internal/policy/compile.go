@@ -32,10 +32,11 @@ type CategoryChecker func(category, name string) (rule string, ok bool)
 // GroupPolicy is a compiled, immutable group.
 type GroupPolicy struct {
 	Group
-	ranges  []ipRange
-	block   map[string]string // domain -> label (service name or "custom")
-	allow   map[string]struct{}
-	windows []window
+	ranges   []ipRange
+	ListMask uint8             // general blocklist classes applied (filter.Class*)
+	block    map[string]string // domain -> label (service name or "custom")
+	allow    map[string]struct{}
+	windows  []window
 }
 
 // Policy is the compiled set of groups in priority order.
@@ -74,6 +75,11 @@ func Normalize(g *Group) error {
 	}
 	g.Block = cleanDomains(g.Block)
 	g.Allow = cleanDomains(g.Allow)
+	sk, err := CleanKinds(g.SkipKinds)
+	if err != nil {
+		return fmt.Errorf("group %q: %w", g.Name, err)
+	}
+	g.SkipKinds = sk
 	if g.Schedule.Enabled {
 		if len(g.Schedule.Windows) == 0 {
 			return fmt.Errorf("group %q: schedule is enabled but has no time windows", g.Name)
@@ -106,7 +112,8 @@ func Compile(groups []Group) (*Policy, error) {
 		if err := Normalize(&g); err != nil {
 			return nil, err
 		}
-		gp := &GroupPolicy{Group: g, block: map[string]string{}, allow: map[string]struct{}{}}
+		gp := &GroupPolicy{Group: g, block: map[string]string{}, allow: map[string]struct{}{},
+			ListMask: KindsMask(g.SkipKinds)}
 		for _, m := range g.Members {
 			from, to, _ := ParseMember(m)
 			gp.ranges = append(gp.ranges, ipRange{from, to})
@@ -279,4 +286,34 @@ func isGoogleSearch(name string) bool {
 		return (labels[0] == "com" || labels[0] == "co") && len(labels[1]) == 2
 	}
 	return false
+}
+
+// ListKinds are the kinds of general blocklists.
+var ListKinds = []string{"malware", "phishing", "ads", "other"}
+
+// CleanKinds validates and de-duplicates a list of kinds.
+func CleanKinds(in []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, k := range in {
+		k = strings.TrimSpace(strings.ToLower(k))
+		if k == "" || seen[k] {
+			continue
+		}
+		if filter.KindClass(k) == filter.ClassOther && k != "other" {
+			return nil, fmt.Errorf("unknown list kind %q", k)
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	return out, nil
+}
+
+// KindsMask returns the classes applied when skip are left out.
+func KindsMask(skip []string) uint8 {
+	m := filter.ClassAll
+	for _, k := range skip {
+		m &^= filter.KindClass(k)
+	}
+	return m
 }

@@ -25,13 +25,16 @@
     <nav>
       <button data-tab="dash" class="active" data-i18n="tab_dash"></button>
       <button data-tab="log" data-i18n="tab_log"></button>
-      <button data-tab="rules" data-i18n="tab_rules"></button>
+      <button data-tab="rules" class="admin-only" data-i18n="tab_rules"></button>
       <button data-tab="groups" data-i18n="tab_groups"></button>
-      <button data-tab="lists" data-i18n="tab_lists"></button>
+      <button data-tab="devices" class="admin-only" data-i18n="tab_devices"></button>
+      <button data-tab="lists" class="admin-only" data-i18n="tab_lists"></button>
       <button data-tab="settings" data-i18n="tab_settings"></button>
     </nav>
     <div class="right">
+      <a id="update-link" class="pill update hidden" target="_blank" rel="noopener noreferrer"></a>
       <span id="blocking-state" class="pill"></span>
+      <span id="me" class="muted"></span>
       <select class="lang-select" aria-label="Language"></select>
       <button id="logout" class="ghost" data-i18n="logout"></button>
     </div>
@@ -66,7 +69,48 @@
 
     <!-- Query log -->
     <div id="tab-log" class="tab hidden">
-      <div class="card">
+      <div class="toolbar">
+        <label class="inline radio"><input type="radio" name="log-src" value="live" checked> <span data-i18n="log_live"></span></label>
+        <label class="inline radio"><input type="radio" name="log-src" value="disk"> <span data-i18n="log_disk"></span></label>
+      </div>
+      <div class="card hidden" id="log-disk-card">
+        <h2 data-i18n="arch_title"></h2>
+        <p class="muted" id="arch-info"></p>
+        <div class="toolbar">
+          <label class="inline"><span data-i18n="arch_from"></span> <input type="date" id="arch-from"></label>
+          <label class="inline"><span data-i18n="arch_to"></span> <input type="date" id="arch-to"></label>
+          <input id="arch-clients" data-i18n-ph="arch_clients_ph">
+          <input id="arch-q" data-i18n-ph="arch_q_ph">
+        </div>
+        <div class="toolbar">
+          <select id="arch-status">
+            <option value="" data-i18n="f_all"></option>
+            <option value="threats" data-i18n="f_threats"></option>
+            <option value="blocked" data-i18n="f_blocked"></option>
+            <option value="forwarded" data-i18n="f_forwarded"></option>
+            <option value="cached" data-i18n="f_cached"></option>
+            <option value="allowed" data-i18n="f_allowed"></option>
+            <option value="error" data-i18n="f_error"></option>
+          </select>
+          <select id="arch-kind">
+            <option value="" data-i18n="k_any"></option>
+            <option value="malware" data-i18n="k_malware"></option>
+            <option value="phishing" data-i18n="k_phishing"></option>
+            <option value="ads" data-i18n="k_ads"></option>
+            <option value="parental" data-i18n="k_parental"></option>
+            <option value="custom" data-i18n="k_custom"></option>
+            <option value="other" data-i18n="k_other"></option>
+          </select>
+          <button id="arch-show" data-i18n="arch_show"></button>
+          <select id="arch-format">
+            <option value="csv" data-i18n="fmt_csv"></option>
+            <option value="csv-comma" data-i18n="fmt_csv_comma"></option>
+            <option value="json">JSON</option>
+          </select>
+          <button id="arch-download" class="ghost" data-i18n="arch_download"></button>
+        </div>
+      </div>
+      <div class="card" id="log-live-card">
         <div class="toolbar">
           <input id="log-q" data-i18n-ph="log_search">
           <select id="log-status">
@@ -85,6 +129,39 @@
         <table class="log">
           <thead><tr><th data-i18n="col_time"></th><th data-i18n="col_client"></th><th data-i18n="col_group"></th><th data-i18n="col_domain"></th><th data-i18n="col_type"></th><th data-i18n="col_status"></th><th data-i18n="col_rule"></th><th data-i18n="col_ms"></th><th></th></tr></thead>
           <tbody id="log-body"></tbody>
+        </table>
+        </div>
+      </div>
+      <div class="card hidden" id="arch-result">
+        <div class="scroll">
+        <table class="log">
+          <thead><tr><th data-i18n="col_date"></th><th data-i18n="col_client"></th><th data-i18n="col_group"></th><th data-i18n="col_domain"></th><th data-i18n="col_type"></th><th data-i18n="col_status"></th><th data-i18n="col_kind"></th><th data-i18n="col_rule"></th></tr></thead>
+          <tbody id="arch-body"></tbody>
+        </table>
+        </div>
+        <button id="arch-more" class="ghost hidden spaced" data-i18n="arch_more"></button>
+      </div>
+    </div>
+
+    <!-- Devices -->
+    <div id="tab-devices" class="tab hidden">
+      <div class="card">
+        <h2 data-i18n="dev_title"></h2>
+        <p class="muted" data-i18n="dev_help"></p>
+        <div class="toolbar">
+          <label class="inline"><span data-i18n="dev_server"></span> <input id="dev-server" data-i18n-ph="dev_server_ph"></label>
+          <button id="dev-server-save" class="ghost" data-i18n="save"></button>
+        </div>
+        <p class="muted" data-i18n="dev_mac_note"></p>
+        <form id="dev-add" class="toolbar">
+          <input id="dev-ip" data-i18n-ph="dev_ip_ph">
+          <input id="dev-name" data-i18n-ph="dev_name_ph">
+          <button type="submit" data-i18n="dev_set_name"></button>
+        </form>
+        <div class="scroll">
+        <table>
+          <thead><tr><th>IP</th><th data-i18n="dev_col_name"></th><th data-i18n="dev_col_auto"></th><th data-i18n="dev_col_first"></th><th data-i18n="dev_col_last"></th><th></th></tr></thead>
+          <tbody id="dev-body"></tbody>
         </table>
         </div>
       </div>
@@ -120,7 +197,7 @@
 
     <!-- Groups -->
     <div id="tab-groups" class="tab hidden">
-      <div class="card">
+      <div class="card admin-only">
         <h2 data-i18n="g_new"></h2>
         <p class="muted" data-i18n="g_help"></p>
         <form id="group-add" class="toolbar">
@@ -138,12 +215,19 @@
         <div class="card-head"><h2 data-i18n="lists_title"></h2>
           <button id="lists-refresh" data-i18n="lists_refresh"></button></div>
         <table>
-          <thead><tr><th data-i18n="col_on"></th><th data-i18n="col_name"></th><th data-i18n="col_type"></th><th data-i18n="col_rules"></th><th data-i18n="col_updated"></th><th data-i18n="col_error"></th><th></th></tr></thead>
+          <thead><tr><th data-i18n="col_on"></th><th data-i18n="col_name"></th><th data-i18n="col_type"></th><th data-i18n="col_kind"></th><th data-i18n="col_rules"></th><th data-i18n="col_updated"></th><th data-i18n="col_error"></th><th></th></tr></thead>
           <tbody id="lists-body"></tbody>
         </table>
         <form id="list-add" class="toolbar">
           <input id="list-name" data-i18n-ph="list_name_ph">
           <input id="list-url" data-i18n-ph="list_url_ph" class="grow">
+          <select id="list-kind">
+            <option value="" data-i18n="k_auto"></option>
+            <option value="malware" data-i18n="k_malware"></option>
+            <option value="phishing" data-i18n="k_phishing"></option>
+            <option value="ads" data-i18n="k_ads"></option>
+            <option value="other" data-i18n="k_other"></option>
+          </select>
           <label class="inline"><input type="checkbox" id="list-allow"> <span data-i18n="list_is_allow"></span></label>
           <button type="submit" data-i18n="list_add"></button>
         </form>
@@ -152,6 +236,7 @@
 
     <!-- Settings -->
     <div id="tab-settings" class="tab hidden">
+      <div class="admin-only">
       <div class="grid2">
         <div class="card">
           <h2 data-i18n="filtering"></h2>
@@ -164,6 +249,7 @@
           </div>
           <h2 data-i18n="cache"></h2>
           <button id="cache-flush" class="ghost" data-i18n="cache_flush"></button>
+          <p class="muted spaced"><span data-i18n="profile"></span>: <b id="profile-name"></b></p>
         </div>
         <div class="card">
           <h2 data-i18n="up_title"></h2>
@@ -172,6 +258,15 @@
           <label class="inline radio"><input type="radio" name="up-strategy" value="fastest"> <span data-i18n="up_fast"></span></label>
           <p class="muted" data-i18n="up_fast_help"></p>
         </div>
+      </div>
+      <div class="card">
+        <h2 data-i18n="fs_title"></h2>
+        <div class="grid2">
+          <div><h3 data-i18n="fs_default"></h3><div id="fs-kinds" class="checks"></div></div>
+          <label><span data-i18n="fs_bypass"></span><textarea id="fs-bypass" rows="3" placeholder="192.168.11.5&#10;192.168.11.64/28"></textarea></label>
+        </div>
+        <p id="fs-config" class="muted"></p>
+        <button id="fs-save" data-i18n="save"></button>
       </div>
       <div class="card">
         <h2 data-i18n="us_title"></h2>
@@ -192,6 +287,161 @@
           <span id="us-state" class="muted"></span>
         </div>
         <table id="us-results" class="hidden"><thead><tr><th data-i18n="col_server"></th><th data-i18n="us_result"></th><th data-i18n="col_latency"></th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <h2 data-i18n="ql_title"></h2>
+          <label><span data-i18n="ql_mode"></span>
+            <select id="ql-mode">
+              <option value="off" data-i18n="ql_off"></option>
+              <option value="threats" data-i18n="ql_threats"></option>
+              <option value="blocked" data-i18n="ql_blocked"></option>
+              <option value="all" data-i18n="ql_all"></option>
+            </select></label>
+          <label><span data-i18n="ql_days"></span><input type="number" id="ql-days" min="1" max="3650"></label>
+          <label><span data-i18n="ql_max"></span><input type="number" id="ql-max" min="10"></label>
+          <label><span data-i18n="ql_free"></span><input type="number" id="ql-free" min="0"></label>
+          <p class="muted" data-i18n="ql_help"></p>
+          <button id="ql-save" data-i18n="save"></button>
+          <p id="ql-state" class="muted spaced"></p>
+        </div>
+        <div class="card">
+          <h2 data-i18n="tg_title"></h2>
+          <details class="muted"><summary data-i18n="tg_howto"></summary><ol id="tg-steps"></ol></details>
+          <label><span data-i18n="tg_token"></span>
+            <div class="toolbar nomargin"><input id="tg-token" type="password" autocomplete="off"><button id="tg-token-change" class="ghost small" data-i18n="tg_change"></button><button id="tg-token-clear" class="ghost small" data-i18n="tg_clear"></button></div></label>
+          <label><span data-i18n="tg_chat"></span>
+            <div class="toolbar nomargin"><input id="tg-chat"><button id="tg-detect" class="ghost small" data-i18n="tg_detect"></button></div></label>
+          <div id="tg-chats" class="toolbar"></div>
+          <h3 data-i18n="tg_events"></h3>
+          <div id="tg-events" class="checks"></div>
+          <label class="spaced"><span data-i18n="tg_threshold"></span><input type="number" id="tg-threshold" min="2" max="1000"></label>
+          <h3 data-i18n="tg_cmd_title"></h3>
+          <label class="inline"><input type="checkbox" id="tg-commands"> <span data-i18n="tg_commands"></span></label>
+          <p class="muted" data-i18n="tg_commands_help"></p>
+          <div class="toolbar">
+            <label class="inline"><span data-i18n="tg_report"></span>
+              <select id="tg-report"><option value="off" data-i18n="tg_report_off"></option><option value="daily" data-i18n="tg_report_daily"></option><option value="weekly" data-i18n="tg_report_weekly"></option></select></label>
+            <label class="inline"><span data-i18n="tg_report_at"></span> <input type="number" id="tg-report-hour" min="0" max="23" style="width:70px"> <span data-i18n="tg_hour"></span></label>
+          </div>
+          <label><span data-i18n="tg_lang"></span><select id="tg-lang"><option value="uk">Українська</option><option value="en">English</option></select></label>
+          <div class="toolbar">
+            <button id="tg-save" data-i18n="save"></button>
+            <button id="tg-test" class="ghost" data-i18n="tg_test"></button>
+          </div>
+          <p id="tg-state" class="muted"></p>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <h2 data-i18n="https_title"></h2>
+          <p class="muted" data-i18n="https_help"></p>
+          <label class="inline radio"><input type="radio" name="tls-mode" value="off"> <span data-i18n="https_off"></span></label><br>
+          <label class="inline radio"><input type="radio" name="tls-mode" value="auto"> <span data-i18n="https_auto"></span></label><br>
+          <label class="inline radio"><input type="radio" name="tls-mode" value="custom"> <span data-i18n="https_custom"></span></label>
+          <div id="tls-custom" class="hidden spaced">
+            <label><span data-i18n="https_cert"></span><textarea id="tls-cert" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea></label>
+            <label><span data-i18n="https_key"></span><textarea id="tls-key" rows="4" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></label>
+          </div>
+          <p><label class="inline"><input type="checkbox" id="tls-redirect"> <span data-i18n="https_redirect"></span></label></p>
+          <button id="tls-save" data-i18n="save"></button>
+          <p id="tls-state" class="muted spaced"></p>
+        </div>
+        <div class="card">
+          <h2 data-i18n="users_title"></h2>
+          <p class="muted" data-i18n="users_help"></p>
+          <table><thead><tr><th data-i18n="user"></th><th data-i18n="users_role"></th><th data-i18n="users_sessions"></th><th></th></tr></thead><tbody id="users-body"></tbody></table>
+          <form id="user-add" class="toolbar spaced">
+            <input id="user-name" data-i18n-ph="users_name_ph" autocomplete="off">
+            <select id="user-role"><option value="viewer" data-i18n="role_viewer"></option><option value="operator" data-i18n="role_operator"></option><option value="admin" data-i18n="role_admin"></option></select>
+            <input id="user-pass" type="password" data-i18n-ph="users_pass_ph" autocomplete="new-password">
+            <button type="submit" data-i18n="add"></button>
+          </form>
+        </div>
+      </div>
+      <div class="card">
+        <h2 data-i18n="enc_title"></h2>
+        <p class="muted" data-i18n="enc_help"></p>
+        <div class="grid2">
+          <div>
+            <label class="inline"><input type="checkbox" id="enc-enabled"> <span data-i18n="enc_enable"></span></label>
+            <label class="spaced"><span data-i18n="enc_host"></span><input id="enc-host" placeholder="dns.example.com / name.duckdns.org"></label>
+            <label><span data-i18n="enc_addr"></span><input id="enc-addr"></label>
+            <div class="toolbar">
+              <label class="inline"><input type="checkbox" id="enc-doh"> <span>DoH (443)</span></label>
+              <label class="inline"><input type="checkbox" id="enc-dot"> <span>DoT (853)</span></label>
+            </div>
+            <h3 data-i18n="enc_cert"></h3>
+            <label class="inline radio"><input type="radio" name="enc-src" value="ca"> <span data-i18n="enc_src_ca"></span></label><br>
+            <label class="inline radio"><input type="radio" name="enc-src" value="acme"> <span data-i18n="enc_src_acme"></span></label><br>
+            <label class="inline radio"><input type="radio" name="enc-src" value="custom"> <span data-i18n="enc_src_custom"></span></label>
+          </div>
+          <div>
+            <div id="enc-acme" class="hidden">
+              <label><span data-i18n="enc_provider"></span>
+                <select id="enc-provider"><option value="cloudflare">Cloudflare</option><option value="duckdns">DuckDNS</option><option value="desec">deSEC</option></select></label>
+              <label><span data-i18n="enc_token"></span><input id="enc-token" type="password" autocomplete="off"></label>
+              <label><span data-i18n="enc_email"></span><input id="enc-email" type="email"></label>
+              <label class="inline"><input type="checkbox" id="enc-agree"> <span data-i18n="enc_agree"></span> <a href="https://letsencrypt.org/repository/" target="_blank" rel="noopener noreferrer">letsencrypt.org/repository</a></label>
+              <p><label class="inline"><input type="checkbox" id="enc-staging"> <span data-i18n="enc_staging"></span></label></p>
+              <button id="enc-issue" class="ghost" data-i18n="enc_issue"></button>
+              <p id="enc-acme-state" class="muted"></p>
+            </div>
+            <div id="enc-custom" class="hidden">
+              <label><span data-i18n="https_cert"></span><textarea id="enc-cert" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea></label>
+              <label><span data-i18n="https_key"></span><textarea id="enc-key" rows="4" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></label>
+            </div>
+            <div id="enc-ca" class="hidden">
+              <p class="muted" data-i18n="enc_ca_help"></p>
+              <button id="enc-ca-dl" class="ghost" data-i18n="enc_ca_dl"></button>
+            </div>
+          </div>
+        </div>
+        <div class="toolbar spaced"><button id="enc-save" data-i18n="save"></button></div>
+        <p id="enc-state" class="muted"></p>
+        <h3 data-i18n="enc_devices"></h3>
+        <p class="muted" data-i18n="enc_devices_help"></p>
+        <div class="scroll" style="max-height:40vh">
+        <table><thead><tr><th data-i18n="dev_col_name"></th><th>IP</th><th data-i18n="enc_col_doh"></th><th data-i18n="enc_col_dot"></th><th></th></tr></thead><tbody id="enc-dev-body"></tbody></table>
+        </div>
+        <form id="enc-dev-add" class="toolbar spaced">
+          <input id="enc-dev-name" data-i18n-ph="dev_name_ph">
+          <input id="enc-dev-ip" data-i18n-ph="enc_dev_ip_ph">
+          <button type="submit" data-i18n="enc_dev_add"></button>
+        </form>
+        <details class="muted"><summary data-i18n="enc_howto"></summary><ul id="enc-howto"></ul></details>
+      </div>
+      <div class="card">
+        <h2 data-i18n="sl_title"></h2>
+        <p class="muted" data-i18n="sl_help"></p>
+        <label class="inline"><input type="checkbox" id="sl-enabled"> <span data-i18n="sl_enable"></span></label>
+        <div class="toolbar spaced">
+          <input id="sl-addr" placeholder="192.168.11.20:514">
+          <select id="sl-proto"><option value="udp">UDP</option><option value="tcp">TCP</option><option value="tls">TCP + TLS</option></select>
+          <select id="sl-mode"><option value="threats" data-i18n="ql_threats"></option><option value="blocked" data-i18n="ql_blocked"></option><option value="all" data-i18n="ql_all"></option></select>
+          <label class="inline"><input type="checkbox" id="sl-audit"> <span data-i18n="sl_audit"></span></label>
+          <label class="inline"><input type="checkbox" id="sl-insecure"> <span data-i18n="sl_insecure"></span></label>
+        </div>
+        <div class="toolbar"><button id="sl-save" data-i18n="save"></button><button id="sl-test" class="ghost" data-i18n="sl_test"></button></div>
+        <p id="sl-state" class="muted"></p>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2 data-i18n="audit_title"></h2><button id="audit-refresh" class="ghost small" data-i18n="audit_refresh"></button></div>
+        <div class="scroll" style="max-height:40vh">
+        <table class="log"><thead><tr><th data-i18n="col_date"></th><th data-i18n="user"></th><th>IP</th><th data-i18n="audit_action"></th><th data-i18n="col_status"></th></tr></thead><tbody id="audit-body"></tbody></table>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <h2 data-i18n="bk_title"></h2>
+          <p class="muted" data-i18n="bk_help"></p>
+          <label class="inline"><input type="checkbox" id="bk-secrets"> <span data-i18n="bk_secrets"></span></label>
+          <div class="toolbar spaced">
+            <button id="bk-download" data-i18n="bk_download"></button>
+            <label class="inline"><span data-i18n="bk_restore"></span> <input type="file" id="bk-file" accept=".json,application/json"></label>
+          </div>
+        </div>
+      </div>
       </div>
       <div class="grid2">
         <div class="card">

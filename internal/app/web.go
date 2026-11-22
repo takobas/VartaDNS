@@ -33,36 +33,70 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /api/login", a.hLogin)
 	mux.HandleFunc("POST /api/logout", a.hLogout)
 
-	api := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, a.auth(h)) }
-	api("GET /api/status", a.hStatus)
-	api("GET /api/series", a.hSeries)
-	api("GET /api/top", a.hTop)
-	api("GET /api/querylog", a.hQueryLog)
-	api("GET /api/check", a.hCheck)
-	api("POST /api/blocking", a.hBlocking)
-	api("GET /api/rules", a.hRulesGet)
-	api("POST /api/rules", a.hRulesAdd)
-	api("DELETE /api/rules", a.hRulesDelete)
-	api("GET /api/lists", a.hListsGet)
-	api("POST /api/lists", a.hListsAdd)
-	api("PUT /api/lists", a.hListsUpdate)
-	api("DELETE /api/lists", a.hListsDelete)
-	api("POST /api/lists/refresh", a.hListsRefresh)
-	api("POST /api/cache/flush", a.hCacheFlush)
-	api("POST /api/password", a.hPassword)
-	api("GET /metrics", a.hMetrics)
-	api("POST /api/upstream/strategy", a.hUpstreamStrategy)
-	api("GET /api/upstreams", a.hUpstreamsGet)
-	api("POST /api/upstreams/test", a.hUpstreamsTest)
-	api("PUT /api/upstreams", a.hUpstreamsSave)
-	api("POST /api/upstreams/reset", a.hUpstreamsReset)
-	api("GET /api/groups", a.hGroupsGet)
-	api("POST /api/groups", a.hGroupsCreate)
-	api("PUT /api/groups", a.hGroupsUpdate)
-	api("DELETE /api/groups", a.hGroupsDelete)
-	api("POST /api/groups/move", a.hGroupsMove)
-	api("POST /api/groups/internet", a.hGroupsInternet)
-	api("POST /api/groups/rule", a.hGroupsRule)
+	// Minimum role per route: viewer < operator < admin.
+	api := func(role, pattern string, h http.HandlerFunc) { mux.Handle(pattern, a.auth(role, h)) }
+	api(RoleViewer, "GET /api/status", a.hStatus)
+	api(RoleViewer, "GET /api/series", a.hSeries)
+	api(RoleViewer, "GET /api/top", a.hTop)
+	api(RoleViewer, "GET /api/querylog", a.hQueryLog)
+	api(RoleViewer, "GET /api/check", a.hCheck)
+	api(RoleAdmin, "POST /api/blocking", a.hBlocking)
+	api(RoleViewer, "GET /api/rules", a.hRulesGet)
+	api(RoleAdmin, "POST /api/rules", a.hRulesAdd)
+	api(RoleAdmin, "DELETE /api/rules", a.hRulesDelete)
+	api(RoleViewer, "GET /api/lists", a.hListsGet)
+	api(RoleAdmin, "POST /api/lists", a.hListsAdd)
+	api(RoleAdmin, "PUT /api/lists", a.hListsUpdate)
+	api(RoleAdmin, "DELETE /api/lists", a.hListsDelete)
+	api(RoleAdmin, "POST /api/lists/refresh", a.hListsRefresh)
+	api(RoleAdmin, "POST /api/cache/flush", a.hCacheFlush)
+	api(RoleViewer, "POST /api/password", a.hPassword)
+	api(RoleViewer, "GET /metrics", a.hMetrics)
+	api(RoleAdmin, "POST /api/upstream/strategy", a.hUpstreamStrategy)
+	api(RoleViewer, "GET /api/upstreams", a.hUpstreamsGet)
+	api(RoleAdmin, "POST /api/upstreams/test", a.hUpstreamsTest)
+	api(RoleAdmin, "PUT /api/upstreams", a.hUpstreamsSave)
+	api(RoleAdmin, "POST /api/upstreams/reset", a.hUpstreamsReset)
+	api(RoleViewer, "GET /api/groups", a.hGroupsGet)
+	api(RoleAdmin, "POST /api/groups", a.hGroupsCreate)
+	api(RoleOperator, "PUT /api/groups", a.hGroupsUpdate)
+	api(RoleAdmin, "DELETE /api/groups", a.hGroupsDelete)
+	api(RoleAdmin, "POST /api/groups/move", a.hGroupsMove)
+	api(RoleOperator, "POST /api/groups/internet", a.hGroupsInternet)
+	api(RoleOperator, "POST /api/groups/rule", a.hGroupsRule)
+	api(RoleViewer, "GET /api/qlog", a.hQLogStatus)
+	api(RoleAdmin, "PUT /api/qlog", a.hQLogSettings)
+	api(RoleViewer, "GET /api/qlog/entries", a.hQLogDisk)
+	api(RoleViewer, "GET /api/qlog/export", a.hQLogExport)
+	api(RoleAdmin, "GET /api/telegram", a.hTelegramGet)
+	api(RoleAdmin, "PUT /api/telegram", a.hTelegramSave)
+	api(RoleAdmin, "POST /api/telegram/test", a.hTelegramTest)
+	api(RoleAdmin, "POST /api/telegram/chats", a.hTelegramChats)
+	api(RoleViewer, "GET /api/devices", a.hDevicesGet)
+	api(RoleAdmin, "PUT /api/devices/name", a.hDeviceName)
+	api(RoleAdmin, "POST /api/devices/forget", a.hDeviceForget)
+	api(RoleAdmin, "PUT /api/devices/server", a.hNamesServer)
+	api(RoleAdmin, "GET /api/backup", a.hBackup)
+	api(RoleAdmin, "POST /api/restore", a.hRestore)
+	api(RoleViewer, "GET /api/me", a.hMe)
+	api(RoleAdmin, "GET /api/users", a.hUsersGet)
+	api(RoleAdmin, "PUT /api/users", a.hUsersSave)
+	api(RoleAdmin, "DELETE /api/users", a.hUsersDelete)
+	api(RoleAdmin, "GET /api/audit", a.hAudit)
+	api(RoleAdmin, "GET /api/tls", a.hTLSGet)
+	api(RoleAdmin, "PUT /api/tls", a.hTLSSave)
+	api(RoleAdmin, "GET /api/filtering", a.hFilteringGet)
+	api(RoleAdmin, "PUT /api/filtering", a.hFilteringSave)
+	api(RoleAdmin, "GET /api/syslog", a.hSyslogGet)
+	api(RoleAdmin, "PUT /api/syslog", a.hSyslogSave)
+	api(RoleAdmin, "POST /api/syslog/test", a.hSyslogTest)
+	api(RoleAdmin, "GET /api/encdns", a.hEncGet)
+	api(RoleAdmin, "PUT /api/encdns", a.hEncSave)
+	api(RoleAdmin, "POST /api/encdns/issue", a.hEncIssue)
+	api(RoleAdmin, "POST /api/encdns/devices", a.hEncDeviceAdd)
+	api(RoleAdmin, "DELETE /api/encdns/devices", a.hEncDeviceDelete)
+	api(RoleAdmin, "GET /api/encdns/ca.crt", a.hEncCA)
+	api(RoleAdmin, "GET /api/encdns/mobileconfig", a.hEncMobileconfig)
 	return a.hostCheck(securityHeaders(mux))
 }
 
@@ -99,22 +133,51 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// auth requires a valid session cookie; state-changing requests must also
-// carry the X-Varta header (blocks cross-site form posts).
-func (a *App) auth(next http.HandlerFunc) http.Handler {
+// auth requires a valid session with at least the given role; state-changing
+// requests must also carry the X-Varta header (blocks cross-site form posts)
+// and are written to the audit log.
+func (a *App) auth(role string, next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(cookieName)
-		if err != nil || !a.sessions.valid(c.Value) {
+		if err != nil {
 			jsonErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		if r.Method != http.MethodGet && r.Header.Get("X-Varta") != "1" {
+		ss, ok := a.sessions.get(c.Value)
+		if !ok {
+			jsonErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if roleRank(ss.Role) < roleRank(role) {
+			jsonErr(w, http.StatusForbidden, "your role does not allow this")
+			return
+		}
+		if r.Method == http.MethodGet {
+			next(w, withSession(r, ss))
+			return
+		}
+		if r.Header.Get("X-Varta") != "1" {
 			jsonErr(w, http.StatusForbidden, "missing X-Varta header")
 			return
 		}
-		next(w, r)
+		rec := &statusRecorder{ResponseWriter: w, code: http.StatusOK}
+		next(rec, withSession(r, ss))
+		a.auditAdd(AuditEntry{Time: time.Now(), User: ss.User, IP: clientIP(r),
+			Action: r.Method + " " + r.URL.Path, Status: rec.code})
 	})
 }
+
+type statusRecorder struct {
+	http.ResponseWriter
+	code int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.code = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -145,23 +208,27 @@ func readJSON(r *http.Request, v any) error {
 
 func (a *App) hLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-	if a.sessions.lockedOut(ip) {
-		jsonErr(w, http.StatusTooManyRequests, "too many failed logins, wait 10 minutes")
-		return
-	}
 	var req struct{ User, Password string }
 	if err := readJSON(r, &req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "bad request")
 		return
 	}
-	if !a.checkPassword(req.User, req.Password) {
-		a.sessions.fail(ip)
+	req.User = strings.TrimSpace(req.User)
+	if a.sessions.lockedOut(ip) || a.sessions.lockedOut("user:"+req.User) {
+		jsonErr(w, http.StatusTooManyRequests, "too many failed logins, wait 10 minutes")
+		return
+	}
+	u, ok := a.checkLogin(req.User, req.Password)
+	if !ok {
+		a.sessions.fail(ip, "user:"+req.User)
+		a.auditAdd(AuditEntry{Time: time.Now(), User: auditName(req.User), IP: ip, Action: "login", Status: 401})
 		time.Sleep(500 * time.Millisecond)
 		jsonErr(w, http.StatusUnauthorized, "wrong user or password")
 		return
 	}
+	a.auditAdd(AuditEntry{Time: time.Now(), User: u.Name, IP: ip, Action: "login", Status: 200})
 	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: a.sessions.create(), Path: "/",
+		Name: cookieName, Value: a.sessions.create(u.Name, u.Role, ip), Path: "/",
 		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil,
 		MaxAge: int(sessionTTL / time.Second),
 	})
@@ -185,15 +252,16 @@ func (a *App) hPassword(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "bad request")
 		return
 	}
-	if !a.checkPassword(a.state.get().AdminUser, req.Old) {
+	me := sessionOf(r).User
+	if _, ok := a.checkLogin(me, req.Old); !ok {
 		jsonErr(w, http.StatusForbidden, "current password is wrong")
 		return
 	}
-	if err := a.SetPassword(req.New); err != nil {
+	if err := a.SetUserPassword(me, req.New, ""); err != nil {
 		jsonErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	a.sessions.dropAll()
+	a.sessions.dropUser(me)
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -233,8 +301,26 @@ func (a *App) hStatus(w http.ResponseWriter, r *http.Request) {
 		"upstreams":         a.Group.Statuses(),
 		"upstream_strategy": a.Group.Strategy().String(),
 		"lists_updated_at":  last,
-		"admin_user":        a.state.get().AdminUser,
+		"user":              sessionOf(r).User,
+		"role":              sessionOf(r).Role,
+		"profile":           profileName(a.cfg.Profile),
+		"latest_version":    a.latestVersion(),
 	})
+}
+
+// auditName keeps junk typed into the login form out of the audit log.
+func auditName(s string) string {
+	if userNameRE.MatchString(s) {
+		return s
+	}
+	return "?"
+}
+
+func profileName(p string) string {
+	if p == "" {
+		return "standard"
+	}
+	return p
 }
 
 func (a *App) hSeries(w http.ResponseWriter, r *http.Request) {
@@ -368,6 +454,12 @@ func (a *App) hListsAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	spec.Enabled = true
+	if spec.Kind == "" {
+		spec.Kind = guessKind(spec)
+	} else if !validKind(spec.Kind) {
+		jsonErr(w, http.StatusBadRequest, "kind must be malware, phishing, ads or other")
+		return
+	}
 	var dup bool
 	err := a.state.update(func(s *State) {
 		for _, l := range s.Lists {
@@ -394,9 +486,14 @@ func (a *App) hListsUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		URL     string `json:"url"`
 		Enabled bool   `json:"enabled"`
+		Kind    string `json:"kind"` // "" = unchanged
 	}
 	if err := readJSON(r, &req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	if req.Kind != "" && !validKind(req.Kind) {
+		jsonErr(w, http.StatusBadRequest, "kind must be malware, phishing, ads or other")
 		return
 	}
 	found := false
@@ -404,6 +501,9 @@ func (a *App) hListsUpdate(w http.ResponseWriter, r *http.Request) {
 		for i := range s.Lists {
 			if s.Lists[i].URL == req.URL {
 				s.Lists[i].Enabled = req.Enabled
+				if req.Kind != "" {
+					s.Lists[i].Kind = req.Kind
+				}
 				found = true
 			}
 		}

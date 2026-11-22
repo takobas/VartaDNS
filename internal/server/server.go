@@ -52,7 +52,15 @@ type Resolver struct {
 	sem           chan struct{}
 	tcpSem        chan struct{}
 	pol           atomic.Pointer[policyState]
+	bypass        atomic.Pointer[[]netip.Prefix] // panel "do not filter" list (+ config)
+	defaultMask   atomic.Uint32                  // list classes for clients outside groups
+	local         atomic.Pointer[LocalName]
 	lastLog       atomic.Int64
+
+	// OnEntry, if set before serving, may enrich a finished entry (device
+	// name, list kind) and hand it to the disk log and notifiers. It runs on
+	// the query path and must not block.
+	OnEntry func(*stats.Entry)
 }
 
 // logLimit allows at most one upstream-error log line per 5 seconds so a
@@ -73,6 +81,7 @@ func NewResolver(o Options, f *filter.Engine, c *cache.Cache, u *upstream.Group,
 		sem:     make(chan struct{}, o.MaxConcurrent),
 		tcpSem:  make(chan struct{}, 512)}
 	r.blockingOn.Store(true)
+	r.defaultMask.Store(uint32(filter.ClassAll))
 	return r
 }
 
@@ -120,6 +129,33 @@ func inPrefixes(ip netip.Addr, ps []netip.Prefix) bool {
 
 // Resolve handles one query and returns the wire response (nil = drop).
 func (r *Resolver) Resolve(ctx context.Context, msg []byte, client netip.Addr, proto string) []byte {
+	return r.resolve(ctx, msg, client, proto, false)
+}
+
+// ResolveTrusted is Resolve for clients identified by a personal DoH/DoT
+// address: the client ACL is skipped and client is the device's identity.
+func (r *Resolver) ResolveTrusted(ctx context.Context, msg []byte, client netip.Addr, proto string) []byte {
+	return r.resolve(ctx, msg, client, proto, true)
+}
+
+// LocalName makes VartaDNS answer host and *.host itself (the hostname of
+// its own DoH/DoT service).
+type LocalName struct {
+	Host string
+	IP4  []byte
+	IP6  []byte
+}
+
+// SetBypass sets extra clients that are never filtered (from the panel).
+func (r *Resolver) SetBypass(p []netip.Prefix) { r.bypass.Store(&p) }
+
+// SetDefaultClasses sets the list classes for clients outside any group.
+func (r *Resolver) SetDefaultClasses(mask uint8) { r.defaultMask.Store(uint32(mask)) }
+
+// SetLocalName installs (or with nil removes) the local name.
+func (r *Resolver) SetLocalName(l *LocalName) { r.local.Store(l) }
+
+func (r *Resolver) resolve(ctx context.Context, msg []byte, client netip.Addr, proto string, trusted bool) []byte {
 	start := time.Now()
 	ent := stats.Entry{Time: start, Client: client.String(), Proto: proto}
 	finish := func(resp []byte, status string) []byte {
@@ -128,11 +164,14 @@ func (r *Resolver) Resolve(ctx context.Context, msg []byte, client netip.Addr, p
 		if len(resp) >= 4 {
 			ent.Rcode = dnsmsg.Rcode(resp)
 		}
+		if r.OnEntry != nil {
+			r.OnEntry(&ent)
+		}
 		r.Stats.Record(ent)
 		return resp
 	}
 
-	if len(r.opts.AllowedClients) > 0 && !inPrefixes(client, r.opts.AllowedClients) {
+	if !trusted && len(r.opts.AllowedClients) > 0 && !inPrefixes(client, r.opts.AllowedClients) {
 		return nil // not our client: silently drop (no amplification)
 	}
 
@@ -152,6 +191,13 @@ func (r *Resolver) Resolve(ctx context.Context, msg []byte, client netip.Addr, p
 	if !inPrefixes(client, r.opts.RateLimitExempt) && !r.limiter.allow(client, start) {
 		return finish(dnsmsg.BuildError(msg, &q, dnsmsg.RcodeRefused), stats.StatusRefused)
 	}
+	if l := r.local.Load(); l != nil && l.Host != "" && (q.Name == l.Host || strings.HasSuffix(q.Name, "."+l.Host)) {
+		ip := l.IP4
+		if q.Type == dnsmsg.TypeAAAA {
+			ip = l.IP6
+		}
+		return finish(dnsmsg.BuildAddress(msg, q, ip, 300), stats.StatusLocal)
+	}
 	if q.Type == dnsmsg.TypeANY {
 		// ANY is a classic amplification vector; refuse it (RFC 8482 spirit).
 		return finish(dnsmsg.BuildError(msg, &q, dnsmsg.RcodeNotImp), stats.StatusRefused)
@@ -159,6 +205,9 @@ func (r *Resolver) Resolve(ctx context.Context, msg []byte, client netip.Addr, p
 
 	now := start
 	bypass := inPrefixes(client, r.opts.BypassClients)
+	if bp := r.bypass.Load(); !bypass && bp != nil {
+		bypass = inPrefixes(client, *bp)
+	}
 	globalOn := r.BlockingEnabled() && !bypass
 	var gp *policy.GroupPolicy
 	pol := r.pol.Load()
@@ -166,8 +215,10 @@ func (r *Resolver) Resolve(ctx context.Context, msg []byte, client netip.Addr, p
 		// Groups (parental control) keep working while global filtering is paused.
 		gp = pol.p.Lookup(client)
 	}
+	mask := uint8(r.defaultMask.Load())
 	if gp != nil {
 		ent.Group = gp.Name
+		mask = gp.ListMask
 	}
 
 	// decide applies group rules first, then the global rules.
@@ -181,7 +232,7 @@ func (r *Resolver) Resolve(ctx context.Context, msg []byte, client netip.Addr, p
 			}
 		}
 		if globalOn {
-			switch m := r.Filter.Check(name); m.Verdict {
+			switch m := r.Filter.CheckClasses(name, mask); m.Verdict {
 			case filter.Blocked:
 				return true, false, m.Rule, m.Source
 			case filter.Allowed:

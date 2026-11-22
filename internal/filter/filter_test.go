@@ -82,3 +82,48 @@ func BenchmarkCheck(b *testing.B) {
 		e.Check("cdn.static.www.some-normal-site.example.org")
 	}
 }
+
+func TestClassesAndRPZ(t *testing.T) {
+	b := NewBuilder(0)
+	b.AddClass("Ads", strings.NewReader("tracker.example\nboth.example\n"), false, ClassAds)
+	b.AddClass("Malware", strings.NewReader("evil.example\nboth.example\n"), false, ClassMalware)
+	rpz := `$TTL 300
+@ SOA localhost. root.localhost. 1 3600 600 86400 300
+  NS localhost.
+; comment
+rpz-blocked.example CNAME .
+*.rpz-blocked.example CNAME .
+nodata.example 300 IN CNAME *.
+ok.rpz-blocked.example CNAME rpz-passthru.
+32.1.0.0.10.rpz-ip CNAME .
+`
+	n, err := b.AddClass("RPZ", strings.NewReader(rpz), false, ClassOther)
+	if err != nil || n != 4 {
+		t.Fatalf("rpz rules: %d %v", n, err)
+	}
+	e := New()
+	b.Apply(e)
+	if blk, alw := e.RuleCounts(); blk != 5 || alw != 1 {
+		t.Fatalf("counts %d %d", blk, alw)
+	}
+	// "both.example" is in ads and malware: a malware-only client still
+	// gets it blocked and sees the malware list as source.
+	if m := e.CheckClasses("both.example", ClassMalware); m.Verdict != Blocked || m.Source != "Malware" {
+		t.Fatalf("both/malware: %+v", m)
+	}
+	if m := e.CheckClasses("both.example", ClassAds); m.Verdict != Blocked || m.Source != "Ads" {
+		t.Fatalf("both/ads: %+v", m)
+	}
+	if m := e.CheckClasses("tracker.example", ClassMalware|ClassPhishing); m.Verdict != Pass {
+		t.Fatalf("ads must pass for a malware-only client: %+v", m)
+	}
+	if m := e.Check("x.rpz-blocked.example"); m.Verdict != Blocked {
+		t.Fatalf("rpz block: %+v", m)
+	}
+	if m := e.Check("ok.rpz-blocked.example"); m.Verdict != Allowed {
+		t.Fatalf("rpz passthru: %+v", m)
+	}
+	if m := e.Check("nodata.example"); m.Verdict != Blocked {
+		t.Fatalf("rpz nodata: %+v", m)
+	}
+}

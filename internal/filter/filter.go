@@ -31,28 +31,66 @@ type Match struct {
 	Source  string // list name or "custom"
 }
 
+// Kind classes of lists. A client can be given only some of them (e.g.
+// malware and phishing but no ad blocking).
+const (
+	ClassMalware  uint8 = 1 << iota
+	ClassPhishing       // 2
+	ClassAds            // 4
+	ClassOther          // 8
+	ClassAll      = ClassMalware | ClassPhishing | ClassAds | ClassOther
+)
+
+// KindClass maps a list kind name to its class bit (unknown = other).
+func KindClass(kind string) uint8 {
+	switch kind {
+	case "malware":
+		return ClassMalware
+	case "phishing":
+		return ClassPhishing
+	case "ads":
+		return ClassAds
+	}
+	return ClassOther
+}
+
 // set is an immutable, compact rule set: sorted 64-bit hashes of every
 // domain plus a parallel slice of source indexes (~10 bytes per rule).
+// A domain present in lists of different classes is kept once per class
+// (adjacent entries), so a lookup restricted to some classes still finds
+// the right list.
 type set struct {
-	seed    maphash.Seed
-	hashes  []uint64
-	src     []uint16
-	sources []string
+	seed     maphash.Seed
+	hashes   []uint64
+	src      []uint16
+	sources  []string
+	classes  []uint8 // class of each source
+	classAll uint8   // union of classes present
+	unique   int     // distinct domains
 }
 
-func (s *set) has(name string) (int, bool) {
+// has returns the index of an entry for name whose source class is in mask.
+func (s *set) has(name string, mask uint8) (int, bool) {
 	h := maphash.String(s.seed, name)
 	i, ok := slices.BinarySearch(s.hashes, h)
-	return i, ok
+	if !ok {
+		return 0, false
+	}
+	for ; i < len(s.hashes) && s.hashes[i] == h; i++ {
+		if s.classes[s.src[i]]&mask != 0 {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
-func (s *set) lookup(name string) (string, string, bool) {
-	if s == nil || len(s.hashes) == 0 {
+func (s *set) lookup(name string, mask uint8) (string, string, bool) {
+	if s == nil || len(s.hashes) == 0 || s.classAll&mask == 0 {
 		return "", "", false
 	}
 	// Walk from the full name towards the TLD: a.b.example.com, b.example.com, ...
 	for {
-		if i, ok := s.has(name); ok {
+		if i, ok := s.has(name, mask); ok {
 			return name, s.sources[s.src[i]], true
 		}
 		dot := strings.IndexByte(name, '.')
@@ -84,7 +122,11 @@ func New() *Engine {
 
 // Check returns the verdict for a lower-cased name without trailing dot.
 // Priority: custom allow > custom block > list allow > list block.
-func (e *Engine) Check(name string) Match {
+func (e *Engine) Check(name string) Match { return e.CheckClasses(name, ClassAll) }
+
+// CheckClasses is Check using only block lists of the given classes (allow
+// lists and custom rules always apply).
+func (e *Engine) CheckClasses(name string, mask uint8) Match {
 	if name == "" {
 		return Match{}
 	}
@@ -98,10 +140,10 @@ func (e *Engine) Check(name string) Match {
 		return Match{Verdict: Blocked, Rule: r, Source: "custom"}
 	}
 	e.mu.RUnlock()
-	if r, src, ok := e.allow.Load().lookup(name); ok {
+	if r, src, ok := e.allow.Load().lookup(name, ClassAll); ok {
 		return Match{Verdict: Allowed, Rule: r, Source: src}
 	}
-	if r, src, ok := e.block.Load().lookup(name); ok {
+	if r, src, ok := e.block.Load().lookup(name, mask); ok {
 		return Match{Verdict: Blocked, Rule: r, Source: src}
 	}
 	return Match{}
@@ -172,6 +214,7 @@ type Builder struct {
 	block   []pair
 	allow   []pair
 	sources []string
+	classes []uint8
 	nBlock  int
 	nAllow  int
 }
@@ -185,8 +228,14 @@ func NewBuilder(sizeHint int) *Builder {
 // otherwise "@@" adblock exceptions inside the list become allow rules.
 // It returns the number of rules read from this list.
 func (b *Builder) Add(name string, r io.Reader, allowList bool) (int, error) {
+	return b.AddClass(name, r, allowList, ClassOther)
+}
+
+// AddClass is Add for a list of the given class (see KindClass).
+func (b *Builder) AddClass(name string, r io.Reader, allowList bool, class uint8) (int, error) {
 	idx := uint16(len(b.sources))
 	b.sources = append(b.sources, name)
+	b.classes = append(b.classes, class)
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	n := 0
@@ -206,8 +255,9 @@ func (b *Builder) Add(name string, r io.Reader, allowList bool) (int, error) {
 	return n, sc.Err()
 }
 
-// finish sorts and de-duplicates pairs (keeping the first list's source).
-func finish(seed maphash.Seed, ps []pair, sources []string) (*set, int) {
+// finish sorts and de-duplicates pairs: one entry per hash and class,
+// keeping the first list's source of each class.
+func finish(seed maphash.Seed, ps []pair, sources []string, classes []uint8) (*set, int) {
 	slices.SortStableFunc(ps, func(a, b pair) int {
 		switch {
 		case a.h < b.h:
@@ -217,23 +267,33 @@ func finish(seed maphash.Seed, ps []pair, sources []string) (*set, int) {
 		}
 		return 0
 	})
-	s := &set{seed: seed, sources: sources}
+	s := &set{seed: seed, sources: sources, classes: classes}
 	s.hashes = make([]uint64, 0, len(ps))
 	s.src = make([]uint16, 0, len(ps))
+	unique := 0
+	var seen uint8 // classes already stored for the current hash
 	for i, p := range ps {
-		if i > 0 && p.h == ps[i-1].h {
+		c := classes[p.src]
+		if i == 0 || p.h != ps[i-1].h {
+			seen = 0
+			unique++
+		}
+		if seen&c != 0 {
 			continue
 		}
+		seen |= c
+		s.classAll |= c
 		s.hashes = append(s.hashes, p.h)
 		s.src = append(s.src, p.src)
 	}
-	return s, len(s.hashes)
+	s.unique = unique
+	return s, unique
 }
 
 // Apply swaps the collected rules into the engine and releases the builder.
 func (b *Builder) Apply(e *Engine) {
-	bs, nb := finish(b.seed, b.block, b.sources)
-	as, na := finish(b.seed, b.allow, b.sources)
+	bs, nb := finish(b.seed, b.block, b.sources, b.classes)
+	as, na := finish(b.seed, b.allow, b.sources, b.classes)
 	b.block, b.allow = nil, nil
 	b.nBlock, b.nAllow = nb, na
 	e.block.Store(bs)
@@ -246,24 +306,28 @@ func (b *Builder) Counts() (int, int) { return b.nBlock, b.nAllow }
 // RuleCounts returns the active list-based rule counts.
 func (e *Engine) RuleCounts() (block, allow int) {
 	if s := e.block.Load(); s != nil {
-		block = len(s.hashes)
+		block = s.unique
 	}
 	if s := e.allow.Load(); s != nil {
-		allow = len(s.hashes)
+		allow = s.unique
 	}
 	return
 }
 
 // ParseLine extracts a domain from one line of a hosts file, a plain domain
-// list or an Adblock-style list. exception reports an "@@" allow rule.
+// list, an Adblock-style list or an RPZ zone. exception reports an allow
+// rule ("@@" in Adblock, rpz-passthru in RPZ).
 func ParseLine(line string) (domain string, exception bool) {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return "", false
 	}
 	switch line[0] {
-	case '#', '!', '[':
+	case '#', '!', '[', ';', '$':
 		return "", false
+	}
+	if d, exc, ok := parseRPZ(line); ok {
+		return d, exc
 	}
 	if i := strings.IndexByte(line, '#'); i >= 0 {
 		line = strings.TrimSpace(line[:i])
@@ -339,4 +403,54 @@ func Normalize(d string) string {
 		return "" // bare IPs are not domain rules
 	}
 	return d
+}
+
+// parseRPZ handles one RPZ (Response Policy Zone) record, as published for
+// BIND, PowerDNS Recursor, Knot Resolver and Unbound:
+//
+//	example.com CNAME .               block (NXDOMAIN)
+//	*.example.com CNAME .             block (subdomains; suffix match covers both)
+//	example.com 300 IN CNAME *.       block (NODATA)
+//	example.com CNAME rpz-drop.       block (drop)
+//	example.com CNAME rpz-passthru.   allow (exception)
+//
+// Other targets (redirects to a walled garden) are treated as blocks.
+// SOA/NS/A records and IP-based triggers (rpz-ip, rpz-nsdname...) are
+// skipped. ok=false: not an RPZ line.
+func parseRPZ(line string) (domain string, exception, ok bool) {
+	if i := strings.IndexByte(line, ';'); i >= 0 {
+		line = line[:i]
+	}
+	f := strings.Fields(line)
+	ci := -1
+	for i, x := range f {
+		if strings.EqualFold(x, "CNAME") {
+			ci = i
+			break
+		}
+	}
+	if ci < 1 || ci != len(f)-2 {
+		for _, x := range f {
+			switch strings.ToUpper(x) {
+			case "SOA", "NS":
+				return "", false, true // zone header
+			}
+		}
+		return "", false, false
+	}
+	name, target := f[0], strings.ToLower(f[len(f)-1])
+	if name == "@" {
+		return "", false, true
+	}
+	for _, l := range strings.Split(strings.ToLower(strings.TrimSuffix(name, ".")), ".") {
+		switch l {
+		case "rpz-ip", "rpz-nsip", "rpz-nsdname", "rpz-client-ip":
+			return "", false, true // IP/NS triggers are not domain rules
+		}
+	}
+	d := Normalize(name)
+	if d == "" {
+		return "", false, true
+	}
+	return d, target == "rpz-passthru.", true
 }

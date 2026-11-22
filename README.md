@@ -5,7 +5,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 ![Go](https://img.shields.io/badge/Go-stdlib%20only-00ADD8)
 
-**English summary.** VartaDNS is a self-hosted filtering DNS server with a built-in web panel (Ukrainian / English). It blocks ads, trackers, phishing and malware domains for the whole network and adds per-device parental control: blocked services (TikTok, Roblox, …), categories, SafeSearch, an internet kill switch and schedules. Written in pure Go with zero dependencies, it ships as a ~7 MB static binary and runs as a container on MikroTik RouterOS v7 (arm64 / armv7 / x86) — even on a 128 MB hAP ac² — or on any Linux host. The documentation below is in Ukrainian.
+**English summary.** VartaDNS is a self-hosted filtering DNS server with a built-in web panel (Ukrainian / English). It blocks ads, trackers, phishing and malware domains for the whole network and adds per-device parental control: blocked services (TikTok, Roblox, …), categories, SafeSearch, an internet kill switch and schedules. Since 0.3 it also keeps a query log on disk with export, sends Telegram alerts about malware (with bot commands), supports panel users with roles, HTTPS, syslog/SIEM forwarding, RPZ lists, per-group list categories and DNS-over-HTTPS/TLS for clients with personal per-device addresses and Let's Encrypt certificates. Written in pure Go with zero dependencies, it ships as a ~7 MB static binary and runs as a container on MikroTik RouterOS v7 (arm64 / armv7 / x86) — even on a 128 MB hAP ac² — or on any Linux host. The documentation below is in Ukrainian.
 
 ---
 
@@ -15,7 +15,8 @@
 
 ## Можливості
 
-- **Фільтрація за суфіксом.** Правило `example.com` блокує й `ads.example.com`. Підтримує формати hosts, списки доменів і Adblock (`||domain^`, винятки `@@||domain^`).
+- **Фільтрація за суфіксом.** Правило `example.com` блокує й `ads.example.com`. Підтримує формати hosts, списки доменів, Adblock (`||domain^`, винятки `@@||domain^`) і RPZ (`domain CNAME .`, винятки `rpz-passthru.`).
+- **Категорії списків:** віруси, фішинг, реклама, інше. Кожній групі можна залишити лише частину (наприклад, «Бухгалтерія» — тільки віруси й фішинг), окремо задається категорія для пристроїв поза групами. «Не фільтрувати ці IP» налаштовується в панелі.
 - **Перевірка CNAME.** Блокує трекери, замасковані під піддомен сайту (CNAME cloaking).
 - **Власні чорний і білий списки** з панелі. Білий список має найвищий пріоритет.
 - **Компактні правила.** 1 млн правил займає ~10 МБ RAM (64-бітні хеші), перевірка одного домену ~0,2 мкс.
@@ -33,6 +34,13 @@
   - керування списками, пауза захисту, зміна пароля.
 
   Вхід через сесію (PBKDF2-SHA256, захист від підбору пароля, SameSite=Strict, захист від CSRF).
+- **Користувачі з ролями** (з 0.3): адмін, оператор (керує групами), перегляд. Журнал дій: хто, з якого IP і що змінив. **HTTPS панелі** на 8443: самопідписаний сертифікат з відбитком або свій.
+- **Журнал на флешці** (з 0.3): файл на кожен день, старі дні стискаються. Очищення за терміном, розміром і вільним місцем (DNS ніколи не зупиняється). Перегляд і вивантаження за датами, IP, статусом, категорією у CSV (Excel) або JSON.
+- **Пристрої:** «ім'я · IP» у журналі, Telegram і звітах. Імена задаються вручну або беруться з DHCP через DNS роутера (`deploy/examples/mikrotik-device-names.rsc`).
+- **Telegram** (з 0.3): сповіщення тільки про віруси за замовчуванням, інші типи вмикаються галочками (фішинг, батьківський контроль, «пристрій, можливо, заражений», новий пристрій, флешка заповнена, видалення журналів, upstream недоступні, нова версія). Антиспам. Команди боту: `/status`, `/pause`, `/resume`, `/top`, `/threats`, `/groups`, `/internet`. Звіт щодня або щотижня. Токен змінюється будь-коли.
+- **Шифрований DNS для пристроїв** (з 0.3): DoH (443) і DoT (853) з персональними адресами пристроїв. Пристрій впізнається за адресою навіть після зміни MAC/IP. Сертифікат: власний CA VartaDNS, Let's Encrypt через DNS-01 (Cloudflare, DuckDNS, deSEC, з wildcard і автооновленням) або свій. Профіль для iPhone генерується.
+- **Syslog / SIEM** (з 0.3): RFC 5424 з JSON через UDP, TCP або TLS. Правила для Wazuh і інструкція для Graylog — у `deploy/siem`.
+- **Резервна копія налаштувань** з панелі (з секретами або без).
 - **Метрики Prometheus** на `/metrics`.
 
 ## Групи клієнтів (батьківський контроль), з версії 0.2
@@ -179,12 +187,14 @@ docker run -d --name vartadns -p 53:53/udp -p 53:53/tcp -p 8080:8080 \
 | `block_mode` | `null` (0.0.0.0 / ::) або `nxdomain` |
 | `allowed_clients` | Хто може надсилати запити (ACL). **Інші клієнти отримують тишу, а не помилку.** Якщо LAN офісу на публічних адресах (наприклад, /29 від провайдера), додайте цю підмережу сюди |
 | `web_hosts` | Імена, за якими відкривається панель (`["dns.lan"]`). За IP-адресою панель доступна завжди. Захист від DNS rebinding |
-| `bypass_clients` | Клієнти без фільтрації |
+| `bypass_clients` | Клієнти без фільтрації (з 0.3 ще й у панелі: Налаштування → Охоплення фільтрації) |
+| `web_tls_listen` | Адреса HTTPS панелі (`:8443`), відкривається, коли HTTPS увімкнено в панелі |
+| `doh_listen` / `dot_listen` | DoH (`:443`) і DoT (`:853`) для пристроїв, коли шифрований DNS увімкнено в панелі |
 | `rate_limit_qps` / `rate_limit_burst` | Ліміт на одного клієнта (0 = вимкнено) |
 | `cache_size` | Максимум записів у кеші |
 | `list_update_hours` | Як часто оновлювати списки |
 
-Стан (власні правила, списки, хеш пароля) зберігається в `data_dir/state.json`, завантажені списки — в `data_dir/lists/`. Сервер стартує з локальних копій списків, тому працює навіть до появи інтернету.
+Стан (власні правила, списки, користувачі, Telegram, групи) зберігається в `data_dir/state.json`, завантажені списки — в `data_dir/lists/`, журнал — у `data_dir/logs/`, сертифікати — у `data_dir/tls/`, журнал дій — у `data_dir/audit.log`. Сервер стартує з локальних копій списків, тому працює навіть до появи інтернету.
 
 ## Розробка
 
@@ -196,15 +206,15 @@ go run ./tools/bench -server 127.0.0.1:53 # load generator
 
 ## Що далі (roadmap)
 
-- виявлення DNS-тунелювання і DGA-доменів, сповіщення в Telegram;
-- блокування DoH через IPv6, прив'язка IP–MAC для груп;
-- DoH і DoT для клієнтів (сервер);
+- виявлення DNS-тунелювання і DGA-доменів;
+- DNSSEC-валідація;
 - інтеграція з MikroTik address-list через API, кілька інстансів з центральною панеллю.
 
 ## Історія версій
 
 | Версія | Зміни |
 |---|---|
+| 0.3.0 | журнал на флешці з очищенням і вивантаженням (CSV/JSON); Telegram-сповіщення (віруси за замовчуванням, інші типи — галочками), команди боту, звіти; імена пристроїв; категорії списків і вибір категорій для груп; RPZ; «не фільтрувати ці IP» у панелі; користувачі з ролями і журнал дій; HTTPS панелі; DoH/DoT для пристроїв з персональними адресами, Let's Encrypt (Cloudflare / DuckDNS / deSEC) або власний CA, профіль iPhone; syslog/SIEM; резервна копія налаштувань; перевірка нових версій |
 | 0.2.3 | upstream-сервери і bootstrap DNS редагуються в панелі (готові набори Quad9 / Cloudflare / Cloudflare Security / Family / Google / AdGuard або свої, «Перевірити», «Скинути до заводських»); перемикач «Спершу шифровано (DoH)» / «Найшвидший сервер»; фонова перевірка upstream кожні 30 с; URLhaus через дзеркало malware-filter (старий файл abuse.ch віддає HTTP 410), стара адреса в збережених налаштуваннях замінюється автоматично |
 | 0.2.0 | групи клієнтів: сервіси, категорії, безпечний пошук, вимикач інтернету, розклад |
 | 0.1.1 | нові адреси списків HaGeZi, легкий профіль для 128 МБ RAM |

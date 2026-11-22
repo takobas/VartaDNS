@@ -5,7 +5,10 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/takobas/vartadns/internal/notify"
 	"github.com/takobas/vartadns/internal/policy"
+	"github.com/takobas/vartadns/internal/qlog"
+	"github.com/takobas/vartadns/internal/syslog"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -19,6 +22,37 @@ type ListSpec struct {
 	URL     string `json:"url"`             // http(s) URL or local file path
 	Allow   bool   `json:"allow,omitempty"` // true = allowlist
 	Enabled bool   `json:"enabled"`
+	Kind    string `json:"kind,omitempty"` // malware, phishing, ads, other (for logs and alerts)
+}
+
+// List kinds.
+const (
+	KindMalware  = "malware"
+	KindPhishing = "phishing"
+	KindAds      = "ads"
+	KindOther    = "other"
+)
+
+func validKind(k string) bool {
+	return k == KindMalware || k == KindPhishing || k == KindAds || k == KindOther
+}
+
+// guessKind picks a kind for lists saved before kinds existed.
+func guessKind(l ListSpec) string {
+	u := strings.ToLower(l.URL + " " + l.Name)
+	switch {
+	case l.Allow:
+		return KindOther
+	case strings.Contains(u, "urlhaus"), strings.Contains(u, "/tif"), strings.Contains(u, "threat"),
+		strings.Contains(u, "malware"):
+		return KindMalware
+	case strings.Contains(u, "phishing"):
+		return KindPhishing
+	case strings.Contains(u, "hagezi"), strings.Contains(u, "adguard"), strings.Contains(u, "easylist"),
+		strings.Contains(u, "oisd"), strings.Contains(u, "stevenblack"):
+		return KindAds
+	}
+	return KindOther
 }
 
 // Config is the static configuration file (JSON).
@@ -26,7 +60,10 @@ type Config struct {
 	Profile           string            `json:"-"` // set by ApplyProfile
 	DNSListen         string            `json:"dns_listen"`
 	WebListen         string            `json:"web_listen"`
-	WebHosts          []string          `json:"web_hosts"` // extra hostnames allowed for the panel (IPs always allowed)
+	WebHosts          []string          `json:"web_hosts"`      // extra hostnames allowed for the panel (IPs always allowed)
+	WebTLSListen      string            `json:"web_tls_listen"` // HTTPS panel address (used when HTTPS is on)
+	DoHListen         string            `json:"doh_listen"`     // DNS-over-HTTPS for clients (when enabled)
+	DoTListen         string            `json:"dot_listen"`     // DNS-over-TLS for clients (when enabled)
 	DataDir           string            `json:"data_dir"`
 	Upstreams         []string          `json:"upstreams"`
 	Bootstrap         []string          `json:"bootstrap_dns"`
@@ -57,6 +94,9 @@ func DefaultConfig() Config {
 	return Config{
 		DNSListen:         ":53",
 		WebListen:         ":8080",
+		WebTLSListen:      ":8443",
+		DoHListen:         ":443",
+		DoTListen:         ":853",
 		DataDir:           "./data",
 		Upstreams:         []string{"https://dns.quad9.net/dns-query", "9.9.9.9", "149.112.112.112"},
 		Bootstrap:         []string{"9.9.9.9", "149.112.112.112"},
@@ -77,10 +117,10 @@ func DefaultConfig() Config {
 		QueryLogSize:    5000,
 		ListUpdateHours: 24,
 		DefaultLists: []ListSpec{
-			{Name: "HaGeZi Pro", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt", Enabled: true},
-			{Name: "HaGeZi Threat Intelligence", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.txt", Enabled: true},
-			{Name: "URLhaus (malware-filter)", URL: "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts-online.txt", Enabled: true},
-			{Name: "Phishing Army", URL: "https://phishing.army/download/phishing_army_blocklist.txt", Enabled: true},
+			{Name: "HaGeZi Pro", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt", Enabled: true, Kind: KindAds},
+			{Name: "HaGeZi Threat Intelligence", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.txt", Enabled: true, Kind: KindMalware},
+			{Name: "URLhaus (malware-filter)", URL: "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts-online.txt", Enabled: true, Kind: KindMalware},
+			{Name: "Phishing Army", URL: "https://phishing.army/download/phishing_army_blocklist.txt", Enabled: true, Kind: KindPhishing},
 		},
 	}
 }
@@ -102,10 +142,10 @@ func ApplyProfile(c *Config, profile string) error {
 	case "light":
 		c.Profile = "light"
 		c.DefaultLists = []ListSpec{
-			{Name: "HaGeZi Light", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/light.txt", Enabled: true},
-			{Name: "HaGeZi Threat Intelligence Mini", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.mini.txt", Enabled: true},
-			{Name: "URLhaus (malware-filter)", URL: "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts-online.txt", Enabled: true},
-			{Name: "Phishing Army", URL: "https://phishing.army/download/phishing_army_blocklist.txt", Enabled: true},
+			{Name: "HaGeZi Light", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/light.txt", Enabled: true, Kind: KindAds},
+			{Name: "HaGeZi Threat Intelligence Mini", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.mini.txt", Enabled: true, Kind: KindMalware},
+			{Name: "URLhaus (malware-filter)", URL: "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts-online.txt", Enabled: true, Kind: KindMalware},
+			{Name: "Phishing Army", URL: "https://phishing.army/download/phishing_army_blocklist.txt", Enabled: true, Kind: KindPhishing},
 		}
 		c.CacheSize = 20000
 		c.QueryLogSize = 1000
@@ -181,6 +221,10 @@ func migrateLists(lists []ListSpec) ([]ListSpec, bool) {
 			l.Name, l.URL = repl.Name, repl.URL
 			changed = true
 		}
+		if !validKind(l.Kind) {
+			l.Kind = guessKind(l)
+			changed = true
+		}
 		if seen[l.URL] {
 			changed = true
 			continue
@@ -206,6 +250,44 @@ type State struct {
 	Bootstrap []string `json:"bootstrap,omitempty"`
 	// UpstreamStrategy overrides the config value once set from the panel.
 	UpstreamStrategy string `json:"upstream_strategy,omitempty"`
+
+	QueryLog    *qlog.Settings    `json:"query_log,omitempty"`
+	Telegram    *notify.Settings  `json:"telegram,omitempty"` // contains the bot token (secret)
+	DeviceNames map[string]string `json:"device_names,omitempty"`
+	NamesServer string            `json:"names_server,omitempty"`  // PTR server for device names
+	Users       []User            `json:"users,omitempty"`         // panel accounts (password hashes)
+	TLS         *TLSSettings      `json:"tls,omitempty"`           // HTTPS for the panel (private key: secret)
+	EncDNS      *EncDNSSettings   `json:"encrypted_dns,omitempty"` // DoH/DoT for clients (tokens, keys: secret)
+	Syslog      *syslog.Settings  `json:"syslog,omitempty"`
+	// DefaultSkipKinds: general list kinds not applied to clients outside
+	// groups. BypassClients: never filtered (added to bypass_clients of the config).
+	DefaultSkipKinds []string `json:"default_skip_kinds,omitempty"`
+	BypassClients    []string `json:"bypass_clients,omitempty"`
+}
+
+// queryLog returns the saved disk-log settings or the defaults.
+func (s *State) queryLog() qlog.Settings {
+	if s.QueryLog != nil {
+		return *s.QueryLog
+	}
+	return qlog.DefaultSettings()
+}
+
+// telegram returns the saved notifier settings (normalized).
+func (s *State) telegram() notify.Settings {
+	var t notify.Settings
+	if s.Telegram != nil {
+		t = *s.Telegram
+		ev := map[string]bool{}
+		for k, v := range s.Telegram.Events {
+			ev[k] = v
+		}
+		if s.Telegram.Events != nil {
+			t.Events = ev
+		}
+	}
+	t.Normalize()
+	return t
 }
 
 type stateStore struct {
@@ -250,6 +332,35 @@ func (st *stateStore) get() State {
 	s.Groups = append([]policy.Group(nil), st.s.Groups...)
 	s.Upstreams = append([]string(nil), st.s.Upstreams...)
 	s.Bootstrap = append([]string(nil), st.s.Bootstrap...)
+	if st.s.QueryLog != nil {
+		q := *st.s.QueryLog
+		s.QueryLog = &q
+	}
+	if st.s.Telegram != nil {
+		t := st.s.telegram()
+		s.Telegram = &t
+	}
+	s.Users = append([]User(nil), st.s.Users...)
+	s.DefaultSkipKinds = append([]string(nil), st.s.DefaultSkipKinds...)
+	s.BypassClients = append([]string(nil), st.s.BypassClients...)
+	if st.s.TLS != nil {
+		t := *st.s.TLS
+		s.TLS = &t
+	}
+	if st.s.EncDNS != nil {
+		e := st.s.encDNS()
+		s.EncDNS = &e
+	}
+	if st.s.Syslog != nil {
+		l := *st.s.Syslog
+		s.Syslog = &l
+	}
+	if st.s.DeviceNames != nil {
+		s.DeviceNames = make(map[string]string, len(st.s.DeviceNames))
+		for k, v := range st.s.DeviceNames {
+			s.DeviceNames[k] = v
+		}
+	}
 	return s
 }
 

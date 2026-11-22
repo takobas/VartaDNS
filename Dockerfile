@@ -19,5 +19,5 @@ COPY --from=build /out/data /data
 COPY deploy/config.json /etc/vartadns/config.json
 ENV VARTA_DATA_DIR=/data
 VOLUME ["/data"]
-EXPOSE 53/udp 53/tcp 8080/tcp
+EXPOSE 53/udp 53/tcp 8080/tcp 8443/tcp 443/tcp 853/tcp
 ENTRYPOINT ["/vartadns", "-config", "/etc/vartadns/config.json"]

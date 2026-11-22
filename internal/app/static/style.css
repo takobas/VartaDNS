@@ -45,7 +45,7 @@ label input { display: block; width: 100%; margin-top: 4px; }
 label.inline { display: inline-flex; gap: 6px; align-items: center; margin: 0; }
 label.inline input { display: inline; width: auto; margin: 0; }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
-.toolbar input:not([type=checkbox]) { flex: 1; min-width: 180px; }
+.toolbar input:not([type=checkbox]):not([type=radio]):not([type=date]) { flex: 1; min-width: 180px; }
 .toolbar .grow { flex: 3; }
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
@@ -80,3 +80,13 @@ textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px s
 label.inline span { color: var(--text); }
 label.radio { margin-top: 6px; }
 label.radio + p { margin: 2px 0 8px 24px; }
+details { margin-bottom: 10px; }
+details summary { cursor: pointer; color: var(--blue); }
+details ol { color: var(--text); font-size: 13px; padding-left: 20px; }
+input[type=date] { color-scheme: dark; }
+label select { display: block; margin-top: 4px; }
+.pill.update { background: rgba(76,141,255,.15); color: var(--blue); text-decoration: none; }
+label.inline select { display: inline-block; margin: 0; }
+#tg-report-hour { flex: 0 0 70px; min-width: 0; }
+body:not(.role-admin) .admin-only { display: none !important; }
+#enc-dev-body td:nth-child(-n+2) { white-space: nowrap; word-break: normal; }

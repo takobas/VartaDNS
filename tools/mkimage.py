@@ -66,7 +66,7 @@ def main():
         "config": {
             "Entrypoint": ["/vartadns", "-config", "/etc/vartadns/config.json"],
             "Env": ["VARTA_DATA_DIR=/data", "PATH=/"],
-            "ExposedPorts": {"53/udp": {}, "53/tcp": {}, "8080/tcp": {}},
+            "ExposedPorts": {"53/udp": {}, "53/tcp": {}, "8080/tcp": {}, "8443/tcp": {}, "443/tcp": {}, "853/tcp": {}},
             "Volumes": {"/data": {}},
             "WorkingDir": "/",
         },
